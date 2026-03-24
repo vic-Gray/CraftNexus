@@ -420,3 +420,206 @@ fn test_total_fees_accumulate() {
     assert_eq!(token_client.balance(&platform_wallet), 75);
     assert_eq!(client.get_total_fees_collected(), 75);
 }
+
+// ===== Additional Comprehensive Coverage Tests =====
+
+#[test]
+#[should_panic(expected = "Not authorized to dispute")]
+fn test_dispute_escrow_failure_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, _) = setup_test(&env);
+
+    token_admin.mint(&buyer, &1000);
+    client.create_escrow(&buyer, &seller, &token_id, &500, &1, &None);
+
+    let unauthorized = Address::generate(&env);
+    client.dispute_escrow(&1, &unauthorized);
+}
+
+#[test]
+#[should_panic(expected = "Escrow already processed")]
+fn test_refund_after_release_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, _) = setup_test(&env);
+
+    token_admin.mint(&buyer, &1000);
+    client.create_escrow(&buyer, &seller, &token_id, &500, &1, &None);
+    client.release_funds(&1);
+    client.refund(&1, &buyer);
+}
+
+#[test]
+#[should_panic(expected = "Escrow already processed")]
+fn test_dispute_after_release_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, _) = setup_test(&env);
+
+    token_admin.mint(&buyer, &1000);
+    client.create_escrow(&buyer, &seller, &token_id, &500, &1, &None);
+    client.release_funds(&1);
+    client.dispute_escrow(&1, &buyer);
+}
+
+#[test]
+#[should_panic(expected = "Escrow not found")]
+fn test_release_funds_escrow_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _) = setup_test(&env);
+    client.release_funds(&999);
+}
+
+#[test]
+#[should_panic(expected = "Escrow not found")]
+fn test_refund_escrow_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _) = setup_test(&env);
+    let caller = Address::generate(&env);
+    client.refund(&999, &caller);
+}
+
+#[test]
+#[should_panic(expected = "Escrow not found")]
+fn test_dispute_escrow_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _) = setup_test(&env);
+    let caller = Address::generate(&env);
+    client.dispute_escrow(&999, &caller);
+}
+
+#[test]
+#[should_panic(expected = "Escrow not found")]
+fn test_auto_release_escrow_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _) = setup_test(&env);
+    client.auto_release(&999);
+}
+
+#[test]
+#[should_panic(expected = "Escrow not found")]
+fn test_can_auto_release_escrow_not_found() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _) = setup_test(&env);
+    let _ = client.can_auto_release(&999);
+}
+
+#[test]
+fn test_auto_release_at_exact_window_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, platform_wallet) = setup_test(&env);
+
+    token_admin.mint(&buyer, &1000);
+    let window = 100;
+    client.create_escrow(&buyer, &seller, &token_id, &500, &1, &Some(window));
+
+    // Exactly at boundary should be releasable.
+    env.ledger().with_mut(|li| {
+        li.timestamp += window;
+    });
+    assert!(client.can_auto_release(&1));
+    client.auto_release(&1);
+
+    let token_client = token::Client::new(&env, &token_id);
+    assert_eq!(token_client.balance(&seller), 475);
+    assert_eq!(token_client.balance(&platform_wallet), 25);
+}
+
+#[test]
+fn test_fee_rounding_floor_behavior_small_amounts() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _) = setup_test(&env);
+
+    // 5% floor rounding (integer division).
+    assert_eq!(client.calculate_fee_for_amount(&1), 0);
+    assert_eq!(client.calculate_fee_for_amount(&19), 0);
+    assert_eq!(client.calculate_fee_for_amount(&20), 1);
+    assert_eq!(client.calculate_fee_for_amount(&39), 1);
+    assert_eq!(client.calculate_fee_for_amount(&40), 2);
+}
+
+#[test]
+fn test_fee_rounding_custom_bps_025_percent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    let platform_wallet = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    // 25 bps = 0.25%
+    client.initialize(&platform_wallet, &admin, &25);
+    assert_eq!(client.calculate_fee_for_amount(&1000), 2); // floor(2.5) => 2
+    assert_eq!(client.calculate_fee_for_amount(&399), 0); // floor(0.9975) => 0
+    assert_eq!(client.calculate_fee_for_amount(&400), 1); // floor(1.0) => 1
+}
+
+#[test]
+fn test_integration_multiple_tokens_and_escrows() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let platform_wallet = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    client.initialize(&platform_wallet, &admin, &500);
+
+    // Token A
+    let token_a_admin = Address::generate(&env);
+    let token_a_contract = env.register_stellar_asset_contract_v2(token_a_admin.clone());
+    let token_a_asset = token::StellarAssetClient::new(&env, &token_a_contract.address());
+    token_a_asset.mint(&buyer, &1000);
+
+    // Token B
+    let token_b_admin = Address::generate(&env);
+    let token_b_contract = env.register_stellar_asset_contract_v2(token_b_admin.clone());
+    let token_b_asset = token::StellarAssetClient::new(&env, &token_b_contract.address());
+    token_b_asset.mint(&buyer, &2000);
+
+    client.create_escrow(&buyer, &seller, &token_a_contract.address(), &500, &1, &None);
+    client.create_escrow(&buyer, &seller, &token_b_contract.address(), &1000, &2, &None);
+
+    client.release_funds(&1);
+    client.release_funds(&2);
+
+    let token_a = token::Client::new(&env, &token_a_contract.address());
+    let token_b = token::Client::new(&env, &token_b_contract.address());
+
+    // Seller: 475 (token A) + 950 (token B)
+    assert_eq!(token_a.balance(&seller), 475);
+    assert_eq!(token_b.balance(&seller), 950);
+
+    // Platform: 25 (token A) + 50 (token B)
+    assert_eq!(token_a.balance(&platform_wallet), 25);
+    assert_eq!(token_b.balance(&platform_wallet), 50);
+    assert_eq!(client.get_total_fees_collected(), 75);
+}
+
+#[test]
+fn test_fuzz_fee_and_net_amount_invariants() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _) = setup_test(&env);
+
+    // Deterministic fuzz-style sweep of amounts for arithmetic invariants.
+    for amount in 1i128..=1_000i128 {
+        let fee = client.calculate_fee_for_amount(&amount);
+        let net = amount - fee;
+
+        assert!(fee >= 0, "fee must be non-negative");
+        assert!(fee <= amount, "fee cannot exceed amount");
+        assert_eq!(fee + net, amount, "fee + net must equal amount");
+    }
+}
