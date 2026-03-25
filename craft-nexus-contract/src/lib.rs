@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol,
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol,
     token,
 };
 
@@ -33,13 +33,16 @@ pub enum EscrowStatus {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Escrow {
+    pub id: u64,
     pub buyer: Address,
     pub seller: Address,
     pub token: Address,
     pub amount: i128,
     pub status: EscrowStatus,
-    pub created_at: u64,
-    pub release_window: u64, // Time in seconds before auto-release
+    pub release_window: u32, // Time in seconds before auto-release
+    pub created_at: u32,
+    pub ipfs_hash: Option<String>,
+    pub metadata_hash: Option<Bytes>,
 }
 
 #[contracttype]
@@ -51,6 +54,8 @@ pub struct EscrowCreatedEvent {
     pub amount: i128,
     pub token: Address,
     pub release_window: u32,
+    pub ipfs_hash: Option<String>,
+    pub metadata_hash: Option<Bytes>,
 }
 
 #[contracttype]
@@ -73,6 +78,13 @@ pub struct EscrowDisputedEvent {
     pub escrow_id: u64,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowMetadata {
+    pub ipfs_hash: Option<String>,
+    pub metadata_hash: Option<Bytes>,
+}
+
 /// Platform configuration data
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,6 +99,52 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
+    fn validate_ipfs_cid(cid: &String) -> bool {
+        let len = cid.len() as usize;
+        if len == 0 || len > 128 {
+            return false;
+        }
+
+        let mut buf = [0u8; 128];
+        cid.copy_into_slice(&mut buf[0..len]);
+        let cid_bytes = &buf[0..len];
+
+        let is_v0 = len == 46
+            && cid_bytes[0] == b'Q'
+            && cid_bytes[1] == b'm'
+            && cid_bytes.iter().all(|b| {
+                matches!(
+                    *b,
+                    b'1'..=b'9'
+                        | b'A'..=b'H'
+                        | b'J'..=b'N'
+                        | b'P'..=b'Z'
+                        | b'a'..=b'k'
+                        | b'm'..=b'z'
+                )
+            });
+
+        let is_v1 = len >= 3
+            && cid_bytes[0] == b'b'
+            && cid_bytes[1..]
+                .iter()
+                .all(|b| matches!(*b, b'a'..=b'z' | b'2'..=b'7'));
+
+        is_v0 || is_v1
+    }
+
+    fn validate_optional_ipfs_hash(ipfs_hash: &Option<String>) {
+        if let Some(cid) = ipfs_hash {
+            assert!(Self::validate_ipfs_cid(cid), "Invalid IPFS CID");
+        }
+    }
+
+    fn validate_optional_metadata_hash(metadata_hash: &Option<Bytes>) {
+        if let Some(hash) = metadata_hash {
+            assert!(hash.len() == 32, "metadata_hash must be 32 bytes");
+        }
+    }
+
     /// Initialize the contract with platform configuration
     /// 
     /// # Arguments
@@ -129,7 +187,32 @@ impl EscrowContract {
         token: Address,
         amount: i128,
         order_id: u32,
-        release_window: Option<u64>,
+        release_window: Option<u32>,
+    ) -> Escrow {
+        Self::create_escrow_with_metadata(
+            env,
+            buyer,
+            seller,
+            token,
+            amount,
+            order_id,
+            release_window,
+            None,
+            None,
+        )
+    }
+
+    /// Create a new escrow for an order and attach off-chain metadata.
+    pub fn create_escrow_with_metadata(
+        env: Env,
+        buyer: Address,
+        seller: Address,
+        token: Address,
+        amount: i128,
+        order_id: u32,
+        release_window: Option<u32>,
+        ipfs_hash: Option<String>,
+        metadata_hash: Option<Bytes>,
     ) -> Escrow {
         buyer.require_auth();
         
@@ -140,17 +223,24 @@ impl EscrowContract {
         assert!(buyer != seller, "Buyer and seller must be different");
         
         // Default to 7 days if not specified
-        let window = release_window.unwrap_or(604800u64);
-        let created_at = env.ledger().timestamp();
+        let window = release_window.unwrap_or(604800u32);
+        let created_at_u64 = env.ledger().timestamp();
+        assert!(created_at_u64 <= u32::MAX as u64, "Ledger timestamp overflow");
+        let created_at = created_at_u64 as u32;
+        Self::validate_optional_ipfs_hash(&ipfs_hash);
+        Self::validate_optional_metadata_hash(&metadata_hash);
 
         let escrow = Escrow {
+            id: order_id as u64,
             buyer: buyer.clone(),
             seller: seller.clone(),
             token: token.clone(),
             amount,
             status: EscrowStatus::Pending,
-            created_at,
             release_window: window,
+            created_at,
+            ipfs_hash: ipfs_hash.clone(),
+            metadata_hash: metadata_hash.clone(),
         };
 
         // Store escrow by order_id
@@ -168,7 +258,9 @@ impl EscrowContract {
             seller: seller.clone(),
             amount,
             token: token.clone(),
-            release_window: window as u32,
+            release_window: window,
+            ipfs_hash,
+            metadata_hash,
         };
         env.events().publish((Symbol::new(&env, "escrow_created"), order_id as u64), event);
 
@@ -268,10 +360,10 @@ impl EscrowContract {
         );
 
         let current_time = env.ledger().timestamp();
-        let elapsed = current_time - escrow.created_at;
+        let elapsed = current_time - (escrow.created_at as u64);
 
         assert!(
-            elapsed >= escrow.release_window,
+            elapsed >= escrow.release_window as u64,
             "Release window not yet elapsed"
         );
 
@@ -375,6 +467,15 @@ impl EscrowContract {
             .expect("Escrow not found")
     }
 
+    /// Get escrow metadata fields only.
+    pub fn get_escrow_metadata(env: Env, order_id: u32) -> EscrowMetadata {
+        let escrow = Self::get_escrow(env, order_id);
+        EscrowMetadata {
+            ipfs_hash: escrow.ipfs_hash,
+            metadata_hash: escrow.metadata_hash,
+        }
+    }
+
     /// Check if escrow can be auto-released
     /// 
     /// # Arguments
@@ -391,9 +492,9 @@ impl EscrowContract {
         }
 
         let current_time = env.ledger().timestamp();
-        let elapsed = current_time - escrow.created_at;
+        let elapsed = current_time - (escrow.created_at as u64);
 
-        elapsed >= escrow.release_window
+        elapsed >= escrow.release_window as u64
     }
 
     /// Dispute an escrow

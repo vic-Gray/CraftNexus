@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Events, Ledger}, vec, Address, Env, IntoVal, Symbol, token};
+use soroban_sdk::{testutils::{Address as _, Events, Ledger}, vec, Address, Bytes, Env, IntoVal, String, Symbol, token};
 
 fn setup_test(env: &Env) -> (EscrowContractClient<'static>, Address, Address, Address, token::StellarAssetClient<'static>, Address) {
     env.mock_all_auths();
@@ -124,7 +124,7 @@ fn test_auto_release_success_after_window() {
     
     // Advance time
     env.ledger().with_mut(|li| {
-        li.timestamp += window + 1;
+        li.timestamp += (window + 1) as u64;
     });
     
     assert!(client.can_auto_release(&1));
@@ -522,7 +522,7 @@ fn test_auto_release_at_exact_window_boundary() {
 
     // Exactly at boundary should be releasable.
     env.ledger().with_mut(|li| {
-        li.timestamp += window;
+        li.timestamp += window as u64;
     });
     assert!(client.can_auto_release(&1));
     client.auto_release(&1);
@@ -622,4 +622,82 @@ fn test_fuzz_fee_and_net_amount_invariants() {
         assert!(fee <= amount, "fee cannot exceed amount");
         assert_eq!(fee + net, amount, "fee + net must equal amount");
     }
+}
+
+#[test]
+fn test_create_escrow_with_metadata_success_cid_v0() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, _) = setup_test(&env);
+
+    token_admin.mint(&buyer, &1000);
+    let ipfs_hash = String::from_str(&env, "QmYwAPJzv5CZsnAzt8auVTL3u2M6YvM7NfF4hB9m8C3vM9");
+    let metadata_hash = Bytes::from_array(
+        &env,
+        &[
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1,
+        ],
+    );
+
+    let escrow = client.create_escrow_with_metadata(
+        &buyer,
+        &seller,
+        &token_id,
+        &500,
+        &1,
+        &None,
+        &Some(ipfs_hash.clone()),
+        &Some(metadata_hash.clone()),
+    );
+    assert_eq!(escrow.id, 1);
+    assert_eq!(escrow.ipfs_hash, Some(ipfs_hash.clone()));
+    assert_eq!(escrow.metadata_hash, Some(metadata_hash.clone()));
+
+    let metadata = client.get_escrow_metadata(&1);
+    assert_eq!(metadata.ipfs_hash, Some(ipfs_hash));
+    assert_eq!(metadata.metadata_hash, Some(metadata_hash));
+}
+
+#[test]
+fn test_create_escrow_with_metadata_success_cid_v1() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, _) = setup_test(&env);
+
+    token_admin.mint(&buyer, &1000);
+    let ipfs_hash = String::from_str(&env, "bafybeigdyrztf2v7y5h6l2k3g5zazf5s6ptm3h4m5k4e3v2w2x2y3z4a5q");
+
+    let escrow = client.create_escrow_with_metadata(
+        &buyer,
+        &seller,
+        &token_id,
+        &500,
+        &1,
+        &None,
+        &Some(ipfs_hash.clone()),
+        &None,
+    );
+
+    assert_eq!(escrow.ipfs_hash, Some(ipfs_hash));
+}
+
+#[test]
+#[should_panic(expected = "Invalid IPFS CID")]
+fn test_create_escrow_with_invalid_cid_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, _) = setup_test(&env);
+
+    token_admin.mint(&buyer, &1000);
+    client.create_escrow_with_metadata(
+        &buyer,
+        &seller,
+        &token_id,
+        &500,
+        &1,
+        &None,
+        &Some(String::from_str(&env, "not-a-cid")),
+        &None,
+    );
 }

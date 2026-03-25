@@ -418,15 +418,35 @@
                         "symbol": "created_at"
                       },
                       "val": {
-                        "u64": 0
+                        "u32": 0
                       }
+                    },
+                    {
+                      "key": {
+                        "symbol": "id"
+                      },
+                      "val": {
+                        "u64": 1
+                      }
+                    },
+                    {
+                      "key": {
+                        "symbol": "ipfs_hash"
+                      },
+                      "val": "void"
+                    },
+                    {
+                      "key": {
+                        "symbol": "metadata_hash"
+                      },
+                      "val": "void"
                     },
                     {
                       "key": {
                         "symbol": "release_window"
                       },
                       "val": {
-                        "u64": 604800
+                        "u32": 604800
                       }
                     },
                     {
@@ -1325,6 +1345,18 @@
                 },
                 {
                   "key": {
+                    "symbol": "ipfs_hash"
+                  },
+                  "val": "void"
+                },
+                {
+                  "key": {
+                    "symbol": "metadata_hash"
+                  },
+                  "val": "void"
+                },
+                {
+                  "key": {
                     "symbol": "release_window"
                   },
                   "val": {
@@ -1395,15 +1427,35 @@
                     "symbol": "created_at"
                   },
                   "val": {
-                    "u64": 0
+                    "u32": 0
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "id"
+                  },
+                  "val": {
+                    "u64": 1
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "ipfs_hash"
+                  },
+                  "val": "void"
+                },
+                {
+                  "key": {
+                    "symbol": "metadata_hash"
+                  },
+                  "val": "void"
                 },
                 {
                   "key": {
                     "symbol": "release_window"
                   },
                   "val": {
-                    "u64": 604800
+                    "u32": 604800
                   }
                 },
                 {
