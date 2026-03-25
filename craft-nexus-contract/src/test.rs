@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Events, Ledger}, vec, Address, Bytes, Env, IntoVal, String, Symbol, token};
+use soroban_sdk::{testutils::{Address as _, Events, Ledger}, vec, Address, Bytes, BytesN, Env, IntoVal, String, Symbol, token};
 
 fn setup_test(env: &Env, mock_auth: bool) -> (EscrowContractClient<'static>, Address, Address, Address, token::StellarAssetClient<'static>, Address, Address) {
     if mock_auth {
@@ -952,9 +952,48 @@ fn test_set_min_escrow_amount_unauthorized() {
     // Do NOT mock auth globally
     let (client, _, _, token_id, _, _, _) = setup_test(&env, false);
     
-    let non_admin = Address::generate(&env);
-    
     // Attempt to set min amount without being the admin or providing auth
     // The contract uses get_admin and admin.require_auth()
     client.set_min_escrow_amount(&token_id, &100);
+}
+
+#[test]
+fn test_contract_upgrade_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _, _) = setup_test(&env, true);
+    
+    // Initial version should be 1
+    assert_eq!(client.get_version(), 1);
+    
+    // To test update_wasm, we need a WASM hash that "exists" in the test environment.
+    // We can upload a tiny dummy WASM to get a valid hash.
+    let dummy_wasm = Bytes::from_array(&env, &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    let new_wasm_hash = env.deployer().upload_contract_wasm(dummy_wasm);
+    
+    client.update_wasm(&new_wasm_hash);
+    
+    // Version should be 2
+    assert_eq!(client.get_version(), 2);
+}
+
+#[test]
+#[should_panic]
+fn test_contract_upgrade_unauthorized() {
+    let env = Env::default();
+    // Do NOT mock auth globally
+    let (client, _, _, _, _, _, _) = setup_test(&env, false);
+    
+    let dummy_hash = BytesN::from_array(&env, &[1u8; 32]);
+    
+    // Attempt upgrade without admin auth
+    client.update_wasm(&dummy_hash);
+}
+
+#[test]
+fn test_get_version_initially() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, _, _, _, _, _) = setup_test(&env, true);
+    assert_eq!(client.get_version(), 1);
 }

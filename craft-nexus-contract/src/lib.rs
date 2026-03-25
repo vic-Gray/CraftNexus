@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, String, Symbol,
     token,
 };
 
@@ -52,6 +52,8 @@ const ADMIN: Symbol = symbol_short!("ADMIN");
 const DEFAULT_PLATFORM_FEE_BPS: u32 = 500;
 /// Maximum platform fee in basis points (10000 = 100%)
 const MAX_PLATFORM_FEE_BPS: u32 = 1000; // 10% max
+/// Current version of the contract for upgradeability
+const CURRENT_VERSION: u32 = 1;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +62,7 @@ pub enum DataKey {
     BuyerEscrows(Address),
     SellerEscrows(Address),
     MinEscrowAmount(Address),
+    ContractVersion,
 }
 
 #[contracttype]
@@ -257,6 +260,9 @@ impl EscrowContract {
         // Initialize total fees to 0
         let zero: i128 = 0;
         env.storage().persistent().set(&TOTAL_FEES, &zero);
+        
+        // Initialize contract version
+        env.storage().persistent().set(&DataKey::ContractVersion, &CURRENT_VERSION);
     }
     /// Create a new escrow for an order
     /// 
@@ -552,6 +558,32 @@ impl EscrowContract {
                 amount: escrow.amount,
             },
         );
+    }
+
+    /// Upgrade the contract's WASM code (admin only)
+    ///
+    /// # Arguments
+    /// * `new_wasm_hash` - The SHA-256 hash of the new WASM code
+    pub fn update_wasm(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        let admin = Self::get_admin(&env)?;
+        admin.require_auth();
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        // Update version in storage
+        let current_version: u32 = env.storage().persistent()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(0);
+        
+        env.storage().persistent().set(&DataKey::ContractVersion, &(current_version + 1));
+
+        Ok(())
+    }
+
+    pub fn get_version(env: Env) -> u32 {
+        env.storage().persistent()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(0)
     }
 
     /// Refund funds to buyer (admin only)
