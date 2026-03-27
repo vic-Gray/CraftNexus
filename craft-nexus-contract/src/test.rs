@@ -1186,7 +1186,7 @@ fn test_contract_upgrade_success() {
     let dummy_wasm = Bytes::from_array(&env, &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
     let new_wasm_hash = env.deployer().upload_contract_wasm(dummy_wasm);
 
-    client.update_wasm(&new_wasm_hash);
+    client.update_wasm();
 
     // Version should be 2
     assert_eq!(client.get_version(), 2);
@@ -1202,7 +1202,7 @@ fn test_contract_upgrade_unauthorized() {
     let dummy_hash = BytesN::from_array(&env, &[1u8; 32]);
 
     // Attempt upgrade without admin auth
-    client.update_wasm(&dummy_hash);
+    client.update_wasm();
 }
 
 #[test]
