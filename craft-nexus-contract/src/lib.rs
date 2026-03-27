@@ -57,7 +57,7 @@ pub enum Error {
     /// Partial refund proposal already exists for this order
     ProposalAlreadyExists = 21,
     /// Re-entrancy detected
-    ReentryDetected = 16,
+    ReentryDetected = 22,
 }
 
 const ESCROW: Symbol = symbol_short!("ESCROW");
@@ -65,6 +65,15 @@ const PLATFORM_FEE: Symbol = symbol_short!("PLAT_FEE");
 const PLATFORM_WALLET: Symbol = symbol_short!("PLAT_WAL");
 const TOTAL_FEES: Symbol = symbol_short!("TOT_FEES");
 const ADMIN: Symbol = symbol_short!("ADMIN");
+const PENDING_ADMIN: Symbol = symbol_short!("PEND_ADM");
+const WASM_UPGRADE_PROPOSAL: Symbol = symbol_short!("WASM_PROP");
+
+/// Standard TTL threshold for persistent storage (approx 14 hours at 5s ledger)
+const TTL_THRESHOLD: u32 = 10_000;
+/// Standard TTL extension for persistent storage (approx 30 days)
+const TTL_EXTENSION: u32 = 518_400;
+/// Grace period for WASM upgrades (7 days in seconds)
+const WASM_UPGRADE_COOLDOWN: u64 = 7 * 24 * 60 * 60;
 
 /// Maximum duration a dispute can remain open before it can be force-resolved (30 days in seconds)
 const MAX_DISPUTE_DURATION: u64 = 30 * 24 * 60 * 60;
@@ -97,6 +106,10 @@ pub enum DataKey {
     PartialRefundProposal(u32),
     /// Re-entrancy guard key
     ReentryGuard,
+    /// Pending admin address for two-step transfer
+    PendingAdmin,
+    /// Proposal for contract WASM upgrade
+    WasmUpgradeProposal,
 }
 
 #[contracttype]
@@ -128,7 +141,7 @@ pub struct Escrow {
     pub release_window: u32, // Time in seconds before auto-release
     pub created_at: u32,
     pub ipfs_hash: Option<String>,
-    pub metadata_hash: Option<BytesN<32>>,
+    pub metadata_hash: Option<Bytes>,
     pub dispute_reason: Option<String>,
     pub dispute_initiated_at: Option<u64>,
 }
@@ -144,7 +157,7 @@ pub struct EscrowCreatedEvent {
     pub release_window: u32,
     pub timestamp: u64,
     pub ipfs_hash: Option<String>,
-    pub metadata_hash: Option<BytesN<32>>,
+    pub metadata_hash: Option<Bytes>,
 }
 
 #[contracttype]
@@ -234,7 +247,14 @@ pub struct BatchFundsReleasedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowMetadata {
     pub ipfs_hash: Option<String>,
-    pub metadata_hash: Option<BytesN<32>>,
+    pub metadata_hash: Option<Bytes>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WasmUpgradeProposal {
+    pub wasm_hash: BytesN<32>,
+    pub upgrade_at: u64,
 }
 
 /// Parameters for batch escrow creation
@@ -248,7 +268,7 @@ pub struct EscrowCreateParams {
     pub order_id: u32,
     pub release_window: Option<u32>,
     pub ipfs_hash: Option<String>,
-    pub metadata_hash: Option<BytesN<32>>,
+    pub metadata_hash: Option<Bytes>,
 }
 
 /// Platform configuration data
@@ -257,10 +277,14 @@ pub struct EscrowCreateParams {
 pub struct PlatformConfig {
     pub platform_fee_bps: u32,    // Platform fee in basis points (500 = 5%)
     pub platform_wallet: Address, // Wallet address to receive fees
-    pub admin: Address,           // Admin address for management
+    /// Admin address for management.
+    /// This address can be a regular account or a Multisig contract address
+    /// to enhance security for sensitive operations like `propose_upgrade_wasm` (#95).
+    pub admin: Address,           
     pub arbitrator: Address,      // Arbitrator for dispute resolution
     pub is_paused: bool,          // Circuit breaker (#96)
     pub min_stake_required: i128, // Minimum stake artisan must hold to create escrows (Issue #99)
+    pub pending_admin: Option<Address>, // Pending admin for two-step transfer
 }
 
 /// Partial refund proposal created during a dispute (Issue #101)
@@ -272,6 +296,7 @@ pub struct PartialRefundProposal {
     pub proposed_by: Address,
     pub proposed_at: u64,
 }
+
 
 #[contract]
 pub struct EscrowContract;
@@ -444,12 +469,13 @@ impl EscrowContract {
         Ok(())
     }
 
-    /// Initialize the contract with platform configuration
-    ///
-    /// # Arguments
-    /// * `platform_wallet` - Address that will receive platform fees
-    /// * `admin` - Admin address for managing platform settings
-    /// * `platform_fee_bps` - Platform fee in basis points (default 500 = 5%)
+    /// Extend the TTL of a persistent storage entry using standardized values.
+    fn extend_persistent(env: &Env, key: &impl soroban_sdk::IntoVal<Env, soroban_sdk::Val>) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_EXTENSION);
+    }
+
     pub fn initialize(
         env: Env,
         platform_wallet: Address,
@@ -473,35 +499,58 @@ impl EscrowContract {
             arbitrator: arbitrator.clone(),
             is_paused: false,
             min_stake_required: 0,
+            pending_admin: None,
         };
 
         env.storage().persistent().set(&PLATFORM_FEE, &config);
-        env.storage()
-            .persistent()
-            .extend_ttl(&PLATFORM_FEE, 1000, 518400);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
+        
         env.storage()
             .persistent()
             .set(&PLATFORM_WALLET, &platform_wallet);
-        env.storage()
-            .persistent()
-            .extend_ttl(&PLATFORM_WALLET, 1000, 518400);
+        Self::extend_persistent(&env, &PLATFORM_WALLET);
+        
         env.storage().persistent().set(&ADMIN, &admin);
-        env.storage().persistent().extend_ttl(&ADMIN, 1000, 518400);
+        Self::extend_persistent(&env, &ADMIN);
 
         // Initialize total fees to 0
         let zero: i128 = 0;
         env.storage().persistent().set(&TOTAL_FEES, &zero);
-        env.storage()
-            .persistent()
-            .extend_ttl(&TOTAL_FEES, 1000, 518400);
+        Self::extend_persistent(&env, &TOTAL_FEES);
 
         // Initialize contract version to 1
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &1u32);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::ContractVersion, 1000, 518400);
+        Self::extend_persistent(&env, &DataKey::ContractVersion);
+    }
+
+    /// Propose a new administrator for the platform (admin only).
+    /// Starts the two-step transfer process (#95).
+    pub fn update_admin(env: Env, new_admin: Address) {
+        let mut config = Self::get_platform_config(&env);
+        config.admin.require_auth();
+
+        config.pending_admin = Some(new_admin);
+        env.storage().persistent().set(&PLATFORM_FEE, &config);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
+    }
+
+    /// Claim the administrative role (pending admin only).
+    /// Completes the two-step transfer process (#95).
+    pub fn claim_admin(env: Env) {
+        let mut config = Self::get_platform_config(&env);
+        let pending = config.pending_admin.as_ref().expect("No pending admin");
+        pending.require_auth();
+
+        config.admin = pending.clone();
+        config.pending_admin = None;
+
+        env.storage().persistent().set(&PLATFORM_FEE, &config);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
+
+        env.storage().persistent().set(&ADMIN, &config.admin);
+        Self::extend_persistent(&env, &ADMIN);
     }
     /// Create a new escrow for an order
     ///
@@ -544,7 +593,7 @@ impl EscrowContract {
         order_id: u32,
         release_window: Option<u32>,
         ipfs_hash: Option<String>,
-        metadata_hash: Option<BytesN<32>>,
+        metadata_hash: Option<Bytes>,
     ) -> Escrow {
         Self::enter_reentry_guard(&env);
         Self::check_not_paused(&env);
@@ -600,9 +649,7 @@ impl EscrowContract {
         };
 
         env.storage().persistent().set(&(ESCROW, order_id), &escrow);
-        env.storage()
-            .persistent()
-            .extend_ttl(&(ESCROW, order_id), 1000, 518400);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
 
         // Update buyer's escrow list for indexing
         let buyer_key = DataKey::BuyerEscrows(buyer.clone());
@@ -613,9 +660,7 @@ impl EscrowContract {
             .unwrap_or(soroban_sdk::Vec::new(&env));
         buyer_escrows.push_back(order_id as u64);
         env.storage().persistent().set(&buyer_key, &buyer_escrows);
-        env.storage()
-            .persistent()
-            .extend_ttl(&buyer_key, 1000, 518400);
+        Self::extend_persistent(&env, &buyer_key);
 
         // Update seller's escrow list for indexing
         let seller_key = DataKey::SellerEscrows(seller.clone());
@@ -626,9 +671,7 @@ impl EscrowContract {
             .unwrap_or(soroban_sdk::Vec::new(&env));
         seller_escrows.push_back(order_id as u64);
         env.storage().persistent().set(&seller_key, &seller_escrows);
-        env.storage()
-            .persistent()
-            .extend_ttl(&seller_key, 1000, 518400);
+        Self::extend_persistent(&env, &seller_key);
 
         // Transfer funds from buyer to contract
         let client = token::Client::new(&env, &token);
@@ -708,19 +751,21 @@ impl EscrowContract {
     }
 
     /// Get platform configuration
-    fn get_platform_config(env: &Env) -> PlatformConfig {
+    pub fn get_platform_config(env: Env) -> PlatformConfig {
+        Self::get_platform_config_internal(&env)
+    }
+
+    fn get_platform_config_internal(env: &Env) -> PlatformConfig {
         let config = env.storage().persistent().get(&PLATFORM_FEE);
         if !(config.is_some()) {
             env.panic_with_error(Error::PlatformNotInitialized);
         }
-        env.storage()
-            .persistent()
-            .extend_ttl(&PLATFORM_FEE, 1000, 518400);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
         config.unwrap()
     }
 
     fn get_arbitrator(env: &Env) -> Address {
-        Self::get_platform_config(env).arbitrator
+        Self::get_platform_config_internal(env).arbitrator
     }
 
     /// Calculate platform fee for a given amount
@@ -738,9 +783,7 @@ impl EscrowContract {
         if !(escrow_opt.is_some()) {
             env.panic_with_error(Error::EscrowNotFound);
         }
-        env.storage()
-            .persistent()
-            .extend_ttl(&(ESCROW, order_id), 1000, 518400);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
         let mut escrow: Escrow = escrow_opt.unwrap();
 
         // Only buyer can release funds
@@ -774,6 +817,7 @@ impl EscrowContract {
             let mut total_fees: i128 = env.storage().persistent().get(&TOTAL_FEES).unwrap_or(0);
             total_fees += fee_amount;
             env.storage().persistent().set(&TOTAL_FEES, &total_fees);
+            Self::extend_persistent(&env, &TOTAL_FEES);
         }
 
         // Transfer remaining funds to seller
@@ -807,9 +851,7 @@ impl EscrowContract {
         if !(escrow_opt.is_some()) {
             env.panic_with_error(Error::EscrowNotFound);
         }
-        env.storage()
-            .persistent()
-            .extend_ttl(&(ESCROW, order_id), 1000, 518400);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
         let mut escrow: Escrow = escrow_opt.unwrap();
 
         if !(escrow.status == EscrowStatus::Active) {
@@ -847,9 +889,7 @@ impl EscrowContract {
             let mut total_fees: i128 = env.storage().persistent().get(&TOTAL_FEES).unwrap_or(0);
             total_fees += fee_amount;
             env.storage().persistent().set(&TOTAL_FEES, &total_fees);
-            env.storage()
-                .persistent()
-                .extend_ttl(&TOTAL_FEES, 1000, 518400);
+            Self::extend_persistent(&env, &TOTAL_FEES);
         }
 
         // Transfer remaining funds to seller
@@ -887,7 +927,7 @@ impl EscrowContract {
             env.panic_with_error(Error::EscrowNotFound);
         }
 
-        env.storage().persistent().extend_ttl(&escrow_key, 1000, 518400);
+        Self::extend_persistent(&env, &escrow_key);
         let mut escrow: Escrow = escrow_opt.unwrap();
 
         // Only buyer can extend release window
@@ -924,15 +964,41 @@ impl EscrowContract {
         Self::exit_reentry_guard(&env);
     }
 
-    /// Upgrade the contract's WASM code (admin only)
-    ///
-    /// # Arguments
-    /// * `new_wasm_hash` - The SHA-256 hash of the new WASM code
-    pub fn update_wasm(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+    /// Propose a new WASM code for the contract (admin only).
+    /// Sets a 7-day grace period before the upgrade can be executed (#95).
+    pub fn propose_upgrade_wasm(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
         let admin = Self::get_admin(&env)?;
         admin.require_auth();
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        let upgrade_at = env.ledger().timestamp() + WASM_UPGRADE_COOLDOWN;
+        let proposal = WasmUpgradeProposal {
+            wasm_hash: new_wasm_hash,
+            upgrade_at,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::WasmUpgradeProposal, &proposal);
+        Self::extend_persistent(&env, &DataKey::WasmUpgradeProposal);
+
+        Ok(())
+    }
+
+    /// Upgrade the contract's WASM code after the grace period has elapsed.
+    /// Can be called by anyone once the proposal is ready (#95).
+    pub fn update_wasm(env: Env) -> Result<(), Error> {
+        let proposal: WasmUpgradeProposal = env
+            .storage()
+            .persistent()
+            .get(&DataKey::WasmUpgradeProposal)
+            .expect("No upgrade proposed");
+
+        if env.ledger().timestamp() < proposal.upgrade_at {
+            panic!("WASM upgrade grace period not yet elapsed");
+        }
+
+        env.deployer()
+            .update_current_contract_wasm(proposal.wasm_hash);
 
         // Update version in storage
         let current_version: u32 = env
@@ -944,9 +1010,24 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::ContractVersion, &(current_version + 1));
+        Self::extend_persistent(&env, &DataKey::ContractVersion);
+
+        // Clear proposal
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::ContractVersion, 1000, 518400);
+            .remove(&DataKey::WasmUpgradeProposal);
+
+        Ok(())
+    }
+
+    /// Cancel a proposed WASM upgrade (admin only) (#95).
+    pub fn cancel_upgrade_wasm(env: Env) -> Result<(), Error> {
+        let admin = Self::get_admin(&env)?;
+        admin.require_auth();
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::WasmUpgradeProposal);
 
         Ok(())
     }
@@ -958,9 +1039,7 @@ impl EscrowContract {
             .get(&DataKey::ContractVersion)
             .unwrap_or(0);
         if env.storage().persistent().has(&DataKey::ContractVersion) {
-            env.storage()
-                .persistent()
-                .extend_ttl(&DataKey::ContractVersion, 1000, 518400);
+            Self::extend_persistent(&env, &DataKey::ContractVersion);
         }
         version
     }
@@ -988,6 +1067,7 @@ impl EscrowContract {
         // Update status
         escrow.status = EscrowStatus::Refunded;
         env.storage().persistent().set(&(ESCROW, order_id), &escrow);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
 
         // Refund to buyer
         let client = token::Client::new(&env, &escrow.token);
@@ -1054,9 +1134,7 @@ impl EscrowContract {
         if !(escrow_opt.is_some()) {
             env.panic_with_error(Error::EscrowNotFound);
         }
-        env.storage()
-            .persistent()
-            .extend_ttl(&(ESCROW, order_id), 1000, 518400);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
         escrow_opt.unwrap()
     }
 
@@ -1078,9 +1156,7 @@ impl EscrowContract {
         if !(escrow_opt.is_some()) {
             env.panic_with_error(Error::EscrowNotFound);
         }
-        env.storage()
-            .persistent()
-            .extend_ttl(&(ESCROW, order_id), 1000, 518400);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
         let escrow: Escrow = escrow_opt.unwrap();
 
         if escrow.status != EscrowStatus::Active {
@@ -1111,9 +1187,7 @@ impl EscrowContract {
         if !(escrow_opt.is_some()) {
             env.panic_with_error(Error::EscrowNotFound);
         }
-        env.storage()
-            .persistent()
-            .extend_ttl(&(ESCROW, order_id), 1000, 518400);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
         let mut escrow: Escrow = escrow_opt.unwrap();
 
         // Allow buyer or seller to dispute
@@ -1155,6 +1229,8 @@ impl EscrowContract {
             .persistent()
             .get(&(ESCROW, order_id))
             .expect("Escrow not found");
+        Self::extend_persistent(&env, &(ESCROW, order_id));
+        
 
         assert!(
             escrow.status == EscrowStatus::Disputed,
@@ -1207,12 +1283,11 @@ impl EscrowContract {
             arbitrator: config.arbitrator,
             is_paused: config.is_paused,
             min_stake_required: config.min_stake_required,
+            pending_admin: config.pending_admin,
         };
 
         env.storage().persistent().set(&PLATFORM_FEE, &new_config);
-        env.storage()
-            .persistent()
-            .extend_ttl(&PLATFORM_FEE, 1000, 518400);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
     }
 
     /// Update platform wallet address (admin only)
@@ -1230,13 +1305,13 @@ impl EscrowContract {
             arbitrator: config.arbitrator,
             is_paused: config.is_paused,
             min_stake_required: config.min_stake_required,
+            pending_admin: config.pending_admin,
         };
 
         env.storage().persistent().set(&PLATFORM_FEE, &new_config);
-        env.storage()
-            .persistent()
-            .extend_ttl(&PLATFORM_FEE, 1000, 518400);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
     }
+
 
     /// Set the minimum escrow amount for a specific token (admin only)
     ///
@@ -1249,7 +1324,8 @@ impl EscrowContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::MinEscrowAmount(token), &min_amount);
+            .set(&DataKey::MinEscrowAmount(token.clone()), &min_amount);
+        Self::extend_persistent(&env, &DataKey::MinEscrowAmount(token));
         Ok(())
     }
 
@@ -1269,9 +1345,7 @@ impl EscrowContract {
     pub fn get_total_fees_collected(env: Env) -> i128 {
         let fees = env.storage().persistent().get(&TOTAL_FEES).unwrap_or(0);
         if env.storage().persistent().has(&TOTAL_FEES) {
-            env.storage()
-                .persistent()
-                .extend_ttl(&TOTAL_FEES, 1000, 518400);
+            Self::extend_persistent(&env, &TOTAL_FEES);
         }
         fees
     }
@@ -1359,6 +1433,7 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&(ESCROW, params.order_id), &escrow);
+        Self::extend_persistent(&env, &(ESCROW, params.order_id));
 
         // Update buyer's escrow list for indexing
         let buyer_key = DataKey::BuyerEscrows(params.buyer.clone());
@@ -1369,6 +1444,7 @@ impl EscrowContract {
             .unwrap_or(soroban_sdk::Vec::new(env));
         buyer_escrows.push_back(params.order_id as u64);
         env.storage().persistent().set(&buyer_key, &buyer_escrows);
+        Self::extend_persistent(env, &buyer_key);
 
         // Update seller's escrow list for indexing
         let seller_key = DataKey::SellerEscrows(params.seller.clone());
@@ -1376,12 +1452,13 @@ impl EscrowContract {
             .storage()
             .persistent()
             .get(&seller_key)
-            .unwrap_or(soroban_sdk::Vec::new(env));
+            .unwrap_or(soroban_sdk::Vec::new(&env));
         seller_escrows.push_back(params.order_id as u64);
         env.storage().persistent().set(&seller_key, &seller_escrows);
+        Self::extend_persistent(&env, &seller_key);
 
         // Transfer funds from buyer to contract
-        let client = token::Client::new(env, &params.token);
+        let client = token::Client::new(&env, &params.token);
         client.transfer(
             &params.buyer,
             &env.current_contract_address(),
@@ -1400,7 +1477,7 @@ impl EscrowContract {
             ipfs_hash: params.ipfs_hash,
             metadata_hash: params.metadata_hash,
         };
-        Self::emit_escrow_created(env, event);
+        Self::emit_escrow_created(&env, event);
 
         Ok(params.order_id as u64)
     }
@@ -1625,9 +1702,7 @@ impl EscrowContract {
         let mut config = Self::get_platform_config(&env);
         config.is_paused = paused;
         env.storage().persistent().set(&PLATFORM_FEE, &config);
-        env.storage()
-            .persistent()
-            .extend_ttl(&PLATFORM_FEE, 1000, 518400);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
     }
 
     /// View: check if contract is paused.
@@ -1647,19 +1722,21 @@ impl EscrowContract {
 
         env.storage()
             .persistent()
-            .set(&DataKey::ArtisanFeeTier(artisan), &fee_bps);
+            .set(&DataKey::ArtisanFeeTier(artisan.clone()), &fee_bps);
+        Self::extend_persistent(&env, &DataKey::ArtisanFeeTier(artisan));
     }
 
     /// Get the effective fee basis points for a seller.
     /// Returns artisan-specific tier if set, otherwise platform default.
     pub fn get_effective_fee_bps(env: Env, seller: Address) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<DataKey, u32>(&DataKey::ArtisanFeeTier(seller))
-            .unwrap_or_else(|| {
-                let config = Self::get_platform_config(&env);
-                config.platform_fee_bps
-            })
+        let key = DataKey::ArtisanFeeTier(seller);
+        if let Some(fee) = env.storage().persistent().get::<DataKey, u32>(&key) {
+            Self::extend_persistent(&env, &key);
+            fee
+        } else {
+            let config = Self::get_platform_config(&env);
+            config.platform_fee_bps
+        }
     }
 
     // ── Referral Rewards (#105) ─────────────────────────────────────
@@ -1672,14 +1749,17 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::ReferralRewardBps, &bps);
+        Self::extend_persistent(&env, &DataKey::ReferralRewardBps);
     }
 
     /// Get the referral reward basis points.
     pub fn get_referral_reward_bps(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<DataKey, u32>(&DataKey::ReferralRewardBps)
-            .unwrap_or(0)
+        let key = DataKey::ReferralRewardBps;
+        let bps = env.storage().persistent().get::<DataKey, u32>(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(&env, &key);
+        }
+        bps
     }
 
     // ── Dispute Resolution Deadline (#93) ───────────────────────────
@@ -1694,9 +1774,7 @@ impl EscrowContract {
         if escrow_opt.is_none() {
             return Err(Error::EscrowNotFound);
         }
-        env.storage()
-            .persistent()
-            .extend_ttl(&(ESCROW, order_id), 1000, 518400);
+        Self::extend_persistent(&env, &(ESCROW, order_id));
         let mut escrow: Escrow = escrow_opt.unwrap();
 
         if escrow.status != EscrowStatus::Disputed {
@@ -1766,17 +1844,13 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&stake_key, &(current_stake + amount));
-        env.storage()
-            .persistent()
-            .extend_ttl(&stake_key, 1000, 518400);
+        Self::extend_persistent(&env, &stake_key);
 
         // Set / reset cooldown end timestamp
         let cooldown_key = DataKey::StakeCooldownEnd(artisan.clone());
         let cooldown_end = env.ledger().timestamp() + STAKE_COOLDOWN;
         env.storage().persistent().set(&cooldown_key, &cooldown_end);
-        env.storage()
-            .persistent()
-            .extend_ttl(&cooldown_key, 1000, 518400);
+        Self::extend_persistent(&env, &cooldown_key);
     }
 
     /// Unstake previously staked tokens after the cooldown period has elapsed.
@@ -1830,9 +1904,7 @@ impl EscrowContract {
         let mut config = Self::get_platform_config(&env);
         config.min_stake_required = min_stake;
         env.storage().persistent().set(&PLATFORM_FEE, &config);
-        env.storage()
-            .persistent()
-            .extend_ttl(&PLATFORM_FEE, 1000, 518400);
+        Self::extend_persistent(&env, &PLATFORM_FEE);
         Ok(())
     }
 
@@ -1920,9 +1992,7 @@ impl EscrowContract {
         };
 
         env.storage().persistent().set(&proposal_key, &proposal);
-        env.storage()
-            .persistent()
-            .extend_ttl(&proposal_key, 1000, 518400);
+        Self::extend_persistent(&env, &proposal_key);
 
         Ok(())
     }
