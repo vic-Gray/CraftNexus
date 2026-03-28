@@ -2499,7 +2499,7 @@ fn test_get_escrow_count_batch_creation() {
         batch.push_back(p);
     }
 
-    client.create_batch_escrow(&1u64, &batch).unwrap();
+    client.create_batch_escrow(&1u64, &batch);
 
     assert_eq!(client.get_escrow_count(), 3);
 
