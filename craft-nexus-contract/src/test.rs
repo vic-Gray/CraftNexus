@@ -1150,6 +1150,28 @@ fn test_create_escrow_with_invalid_cid_fails() {
         &None,
     );
 }
+
+#[test]
+#[should_panic(expected = "Invalid metadata hash length")]
+fn test_create_escrow_with_invalid_metadata_hash_length_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, token_admin, _, _) = setup_test(&env, true);
+
+    token_admin.mint(&buyer, &100_000_000);
+    let invalid_hash = Bytes::from_array(&env, &[7; 31]);
+
+    client.create_escrow_with_metadata(
+        &buyer,
+        &seller,
+        &token_id,
+        &10_000_000,
+        &1,
+        &None,
+        &None,
+        &Some(invalid_hash),
+    );
+}
 // ===== Search and Pagination Tests =====
 
 #[test]
@@ -2363,6 +2385,30 @@ fn test_validate_batch_creation() {
     assert_eq!(errors.get(0).unwrap(), Error::AmountBelowMinimum);
     assert_eq!(errors.get(1).unwrap(), Error::SameBuyerSeller);
     assert!(errors.get(2).is_none());
+}
+
+#[test]
+fn test_validate_batch_creation_rejects_invalid_metadata_hash_length() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, buyer, seller, token_id, _, _, _) = setup_test(&env, true);
+
+    let mut batch_params = soroban_sdk::Vec::new(&env);
+    batch_params.push_back(EscrowCreateParams {
+        buyer,
+        seller,
+        token: token_id,
+        amount: 1000,
+        order_id: 1,
+        release_window: Some(3600),
+        ipfs_hash: None,
+        metadata_hash: Some(Bytes::from_array(&env, &[9; 31])),
+    });
+
+    let errors = client.validate_batch_creation(&batch_params);
+
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors.get(0).unwrap(), Error::InvalidFee);
 }
 
 #[test]
