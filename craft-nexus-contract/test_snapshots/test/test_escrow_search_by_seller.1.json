@@ -1939,7 +1939,7 @@
                     "symbol": "field_name"
                   },
                   "val": {
-                    "string": "platform_fee_bps"
+                    "symbol": "platform_fee_bps"
                   }
                 },
                 {
@@ -1947,7 +1947,14 @@
                     "symbol": "new_value"
                   },
                   "val": {
-                    "string": "500"
+                    "vec": [
+                      {
+                        "symbol": "U32"
+                      },
+                      {
+                        "u32": 500
+                      }
+                    ]
                   }
                 },
                 {
@@ -1955,7 +1962,14 @@
                     "symbol": "old_value"
                   },
                   "val": {
-                    "string": "unset"
+                    "vec": [
+                      {
+                        "symbol": "String"
+                      },
+                      {
+                        "string": "unset"
+                      }
+                    ]
                   }
                 }
               ]
@@ -1987,7 +2001,7 @@
                     "symbol": "field_name"
                   },
                   "val": {
-                    "string": "platform_wallet"
+                    "symbol": "platform_wallet"
                   }
                 },
                 {
@@ -1995,7 +2009,14 @@
                     "symbol": "new_value"
                   },
                   "val": {
-                    "string": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                    "vec": [
+                      {
+                        "symbol": "Address"
+                      },
+                      {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                      }
+                    ]
                   }
                 },
                 {
@@ -2003,7 +2024,14 @@
                     "symbol": "old_value"
                   },
                   "val": {
-                    "string": "unset"
+                    "vec": [
+                      {
+                        "symbol": "String"
+                      },
+                      {
+                        "string": "unset"
+                      }
+                    ]
                   }
                 }
               ]
@@ -2092,7 +2120,7 @@
                     "symbol": "field_name"
                   },
                   "val": {
-                    "string": "min_escrow_amount"
+                    "symbol": "min_escrow_amount"
                   }
                 },
                 {
@@ -2100,7 +2128,17 @@
                     "symbol": "new_value"
                   },
                   "val": {
-                    "string": "0"
+                    "vec": [
+                      {
+                        "symbol": "I128"
+                      },
+                      {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 0
+                        }
+                      }
+                    ]
                   }
                 },
                 {
@@ -2108,7 +2146,17 @@
                     "symbol": "old_value"
                   },
                   "val": {
-                    "string": "0"
+                    "vec": [
+                      {
+                        "symbol": "I128"
+                      },
+                      {
+                        "i128": {
+                          "hi": 0,
+                          "lo": 0
+                        }
+                      }
+                    ]
                   }
                 }
               ]

@@ -246,10 +246,19 @@ pub struct EscrowResolvedEvent {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConfigValue {
+    U32(u32),
+    I128(i128),
+    Address(Address),
+    String(String),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigUpdatedEvent {
-    pub field_name: String,
-    pub old_value: String,
-    pub new_value: String,
+    pub field_name: Symbol,
+    pub old_value: ConfigValue,
+    pub new_value: ConfigValue,
 }
 
 /// Event emitted for each successful escrow in a batch creation
@@ -370,48 +379,6 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
-    fn string_from_u32(env: &Env, value: u32) -> String {
-        let mut digits = [0u8; 10];
-        let mut value = value;
-        let mut index = digits.len();
-
-        if value == 0 {
-            return String::from_str(env, "0");
-        }
-
-        while value > 0 {
-            index -= 1;
-            digits[index] = b'0' + (value % 10) as u8;
-            value /= 10;
-        }
-
-        String::from_bytes(env, &digits[index..])
-    }
-
-    fn string_from_i128(env: &Env, value: i128) -> String {
-        let mut digits = [0u8; 40];
-        let negative = value < 0;
-        let mut value = if negative { -value } else { value } as u128;
-        let mut index = digits.len();
-
-        if value == 0 {
-            return String::from_str(env, "0");
-        }
-
-        while value > 0 {
-            index -= 1;
-            digits[index] = b'0' + (value % 10) as u8;
-            value /= 10;
-        }
-
-        if negative {
-            index -= 1;
-            digits[index] = b'-';
-        }
-
-        String::from_bytes(env, &digits[index..])
-    }
-
     /// Validate IPFS CID format (v0 and v1 with multibase prefixes).
     ///
     /// Supports:
@@ -549,14 +516,14 @@ impl EscrowContract {
         );
     }
 
-    fn emit_config_updated(env: &Env, field_name: &str, old_value: String, new_value: String) {
+    fn emit_config_updated(env: &Env, field_name: &str, old_value: ConfigValue, new_value: ConfigValue) {
         env.events().publish(
             (
                 Symbol::new(env, "config_updated"),
                 Symbol::new(env, field_name),
             ),
             ConfigUpdatedEvent {
-                field_name: String::from_str(env, field_name),
+                field_name: Symbol::new(env, field_name),
                 old_value,
                 new_value,
             },
@@ -772,14 +739,14 @@ impl EscrowContract {
         Self::emit_config_updated(
             &env,
             "platform_fee_bps",
-            String::from_str(&env, "unset"),
-            Self::string_from_u32(&env, platform_fee_bps),
+            ConfigValue::String(String::from_str(&env, "unset")),
+            ConfigValue::U32(platform_fee_bps),
         );
         Self::emit_config_updated(
             &env,
             "platform_wallet",
-            String::from_str(&env, "unset"),
-            platform_wallet.to_string(),
+            ConfigValue::String(String::from_str(&env, "unset")),
+            ConfigValue::Address(platform_wallet),
         );
     }
 
@@ -1715,8 +1682,8 @@ impl EscrowContract {
         Self::emit_config_updated(
             &env,
             "platform_fee_bps",
-            Self::string_from_u32(&env, config.platform_fee_bps),
-            Self::string_from_u32(&env, new_fee_bps),
+            ConfigValue::U32(config.platform_fee_bps),
+            ConfigValue::U32(new_fee_bps),
         );
     }
 
@@ -1747,8 +1714,8 @@ impl EscrowContract {
         Self::emit_config_updated(
             &env,
             "platform_wallet",
-            config.platform_wallet.to_string(),
-            new_config.platform_wallet.to_string(),
+            ConfigValue::Address(config.platform_wallet),
+            ConfigValue::Address(new_config.platform_wallet),
         );
     }
 
@@ -1758,12 +1725,12 @@ impl EscrowContract {
         let previous = config
             .moderator
             .clone()
-            .map(|address| address.to_string())
-            .unwrap_or_else(|| String::from_str(&env, "unset"));
+            .map(|address| ConfigValue::Address(address))
+            .unwrap_or_else(|| ConfigValue::String(String::from_str(&env, "unset")));
         config.moderator = Some(moderator.clone());
         env.storage().persistent().set(&PLATFORM_FEE, &config);
         Self::extend_persistent(&env, &PLATFORM_FEE);
-        Self::emit_config_updated(&env, "moderator", previous, moderator.to_string());
+        Self::emit_config_updated(&env, "moderator", previous, ConfigValue::Address(moderator));
     }
 
     /// Set the minimum escrow amount for a specific token (admin only)
@@ -1783,8 +1750,8 @@ impl EscrowContract {
         Self::emit_config_updated(
             &env,
             "min_escrow_amount",
-            Self::string_from_i128(&env, old_amount),
-            Self::string_from_i128(&env, min_amount),
+            ConfigValue::I128(old_amount),
+            ConfigValue::I128(min_amount),
         );
         Ok(())
     }
@@ -2506,8 +2473,8 @@ impl EscrowContract {
         Self::emit_config_updated(
             &env,
             "wasm_upgrade_cooldown",
-            Self::string_from_u32(&env, old_value),
-            Self::string_from_u32(&env, cooldown_seconds),
+            ConfigValue::U32(old_value),
+            ConfigValue::U32(cooldown_seconds),
         );
         Ok(())
     }
@@ -2526,8 +2493,8 @@ impl EscrowContract {
         Self::emit_config_updated(
             &env,
             "max_dispute_duration",
-            Self::string_from_u32(&env, old_value),
-            Self::string_from_u32(&env, duration_seconds),
+            ConfigValue::U32(old_value),
+            ConfigValue::U32(duration_seconds),
         );
         Ok(())
     }
@@ -2546,8 +2513,8 @@ impl EscrowContract {
         Self::emit_config_updated(
             &env,
             "stake_cooldown",
-            Self::string_from_u32(&env, old_value),
-            Self::string_from_u32(&env, cooldown_seconds),
+            ConfigValue::U32(old_value),
+            ConfigValue::U32(cooldown_seconds),
         );
         Ok(())
     }

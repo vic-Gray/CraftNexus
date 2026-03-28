@@ -648,10 +648,10 @@ fn test_update_platform_fee() {
     let config_event: ConfigUpdatedEvent = last_event.2.try_into_val(&env).unwrap();
     assert_eq!(
         config_event.field_name,
-        String::from_str(&env, "platform_fee_bps")
+        Symbol::new(&env, "platform_fee_bps")
     );
-    assert_eq!(config_event.old_value, String::from_str(&env, "500"));
-    assert_eq!(config_event.new_value, String::from_str(&env, "800"));
+    assert_eq!(config_event.old_value, ConfigValue::U32(500));
+    assert_eq!(config_event.new_value, ConfigValue::U32(800));
 
     // Now create escrow and release - should use 8%
     token_admin_client.mint(&Address::generate(&env), &100_000_000);
@@ -745,11 +745,11 @@ fn test_initialize_emits_config_events() {
 
     assert_eq!(
         fee_event.field_name,
-        String::from_str(&env, "platform_fee_bps")
+        Symbol::new(&env, "platform_fee_bps")
     );
     assert_eq!(
         wallet_event.field_name,
-        String::from_str(&env, "platform_wallet")
+        Symbol::new(&env, "platform_wallet")
     );
 }
 
@@ -1225,10 +1225,10 @@ fn test_set_min_escrow_amount_emits_config_event() {
 
     assert_eq!(
         config_event.field_name,
-        String::from_str(&env, "min_escrow_amount")
+        Symbol::new(&env, "min_escrow_amount")
     );
-    assert_eq!(config_event.old_value, String::from_str(&env, "0"));
-    assert_eq!(config_event.new_value, String::from_str(&env, "100000"));
+    assert_eq!(config_event.old_value, ConfigValue::I128(0));
+    assert_eq!(config_event.new_value, ConfigValue::I128(100000));
 }
 
 #[test]
