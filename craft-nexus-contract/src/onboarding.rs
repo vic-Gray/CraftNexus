@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, String, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Map, String, Symbol, Vec};
 use soroban_sdk::{TryFromVal, Val};
 
 /// Standard TTL threshold for persistent storage (approx 14 hours at 5s ledger)
@@ -755,6 +755,7 @@ impl OnboardingContract {
         address: Address,
         escrow_count_delta: u32,
         volume_delta: i128,
+        token_address: Address,
     ) {
         let config: OnboardingConfig = env
             .storage()
@@ -779,7 +780,23 @@ impl OnboardingContract {
         metrics.total_escrow_count = metrics
             .total_escrow_count
             .saturating_add(escrow_count_delta);
-        metrics.total_volume = metrics.total_volume.saturating_add(volume_delta);
+
+        // Normalize volume to 7 decimals (base decimal for auto-verification thresholds)
+        let token_client = token::Client::new(&env, &token_address);
+        let token_decimals = token_client.decimals();
+        let base_decimals = 7u32;
+
+        let normalized_delta = if token_decimals < base_decimals {
+            let diff = base_decimals - token_decimals;
+            volume_delta.saturating_mul(10i128.pow(diff))
+        } else if token_decimals > base_decimals {
+            let diff = token_decimals - base_decimals;
+            volume_delta / 10i128.pow(diff)
+        } else {
+            volume_delta
+        };
+
+        metrics.total_volume = metrics.total_volume.saturating_add(normalized_delta);
 
         env.storage().persistent().set(&key, &metrics);
         Self::extend_persistent(&env, &key);

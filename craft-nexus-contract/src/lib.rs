@@ -383,7 +383,7 @@ pub struct PartialRefundProposal {
 #[soroban_sdk::contractclient(name = "OnboardingClient")]
 pub trait OnboardingInterface {
     fn update_reputation(env: Env, address: Address, successful_delta: u32, disputed_delta: u32);
-    fn update_user_metrics(env: Env, address: Address, escrow_count_delta: u32, volume_delta: i128);
+    fn update_user_metrics(env: Env, address: Address, escrow_count_delta: u32, volume_delta: i128, token_address: Address);
 }
 #[contract]
 pub struct EscrowContract;
@@ -1170,7 +1170,7 @@ impl EscrowContract {
         if let Some(client) = Self::get_onboarding_client(&env) {
             client.update_reputation(&escrow.seller, &1u32, &0u32);
             client.update_reputation(&escrow.buyer, &1u32, &0u32);
-            client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount);
+            client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount, &escrow.token);
         }
     }
 
@@ -1249,7 +1249,7 @@ impl EscrowContract {
         if let Some(client) = Self::get_onboarding_client(&env) {
             client.update_reputation(&escrow.seller, &1u32, &0u32);
             client.update_reputation(&escrow.buyer, &1u32, &0u32);
-            client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount);
+            client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount, &escrow.token);
         }
     }
 
@@ -1432,7 +1432,7 @@ impl EscrowContract {
         if let Some(client) = Self::get_onboarding_client(&env) {
             client.update_reputation(&escrow.buyer, &1u32, &0u32);
             client.update_reputation(&escrow.seller, &0u32, &1u32);
-            client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount);
+            client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount, &escrow.token);
         }
         Ok(())
     }
@@ -1662,13 +1662,13 @@ impl EscrowContract {
                     // Seller wins dispute: successful for seller, disputed for buyer
                     client.update_reputation(&escrow.seller, &1u32, &0u32);
                     client.update_reputation(&escrow.buyer, &0u32, &1u32);
-                    client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount);
+                    client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount, &escrow.token);
                 }
                 Resolution::RefundToBuyer => {
                     // Buyer wins dispute: successful for buyer, disputed for seller
                     client.update_reputation(&escrow.buyer, &1u32, &0u32);
                     client.update_reputation(&escrow.seller, &0u32, &1u32);
-                    client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount);
+                    client.update_user_metrics(&escrow.seller, &1u32, &escrow.amount, &escrow.token);
                 }
             }
         }
