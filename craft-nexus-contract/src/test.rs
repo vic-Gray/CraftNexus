@@ -753,6 +753,32 @@ fn test_initialize_emits_config_events() {
     );
 }
 
+#[test]
+fn test_set_artisan_fee_tier_emits_dedicated_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, _, seller, _, _, _, _) = setup_test(&env, true);
+
+    client.set_artisan_fee_tier(&seller, &750);
+
+    assert_eq!(client.get_effective_fee_bps(&seller), 750);
+
+    let events = env.events().all();
+    let last_event = events.last().unwrap();
+    assert_eq!(
+        last_event.1,
+        vec![
+            &env,
+            Symbol::new(&env, "artisan_fee_tier_updated").into_val(&env),
+            seller.clone().into_val(&env)
+        ]
+    );
+
+    let fee_event: ArtisanFeeTierUpdatedEvent = last_event.2.try_into_val(&env).unwrap();
+    assert_eq!(fee_event.artisan, seller);
+    assert_eq!(fee_event.fee_bps, 750);
+}
+
 // ===== Additional Comprehensive Coverage Tests =====
 
 #[test]

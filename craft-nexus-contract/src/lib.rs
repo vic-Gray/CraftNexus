@@ -261,6 +261,13 @@ pub struct ConfigUpdatedEvent {
     pub new_value: ConfigValue,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtisanFeeTierUpdatedEvent {
+    pub artisan: Address,
+    pub fee_bps: u32,
+}
+
 /// Event emitted for each successful escrow in a batch creation
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -527,6 +534,16 @@ impl EscrowContract {
                 old_value,
                 new_value,
             },
+        );
+    }
+
+    fn emit_artisan_fee_tier_updated(env: &Env, artisan: Address, fee_bps: u32) {
+        env.events().publish(
+            (
+                Symbol::new(env, "artisan_fee_tier_updated"),
+                artisan.clone(),
+            ),
+            ArtisanFeeTierUpdatedEvent { artisan, fee_bps },
         );
     }
 
@@ -2280,7 +2297,8 @@ impl EscrowContract {
         env.storage()
             .persistent()
             .set(&DataKey::ArtisanFeeTier(artisan.clone()), &fee_bps);
-        Self::extend_persistent(&env, &DataKey::ArtisanFeeTier(artisan));
+        Self::extend_persistent(&env, &DataKey::ArtisanFeeTier(artisan.clone()));
+        Self::emit_artisan_fee_tier_updated(&env, artisan, fee_bps);
     }
 
     /// Get the effective fee basis points for a seller.
