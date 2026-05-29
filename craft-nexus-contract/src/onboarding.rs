@@ -889,9 +889,12 @@ impl OnboardingContract {
         // Get existing profile
         let mut profile = Self::get_user_profile(&env, user.clone());
 
-        // Update role
-        let _old_role = profile.role;
-        profile.role = new_role;
+        // Issue #520 — capture the previous role so the `RoleUpdated`
+        // event below can carry both the old and the new role. Indexers
+        // can then reconstruct a role-transition timeline without
+        // re-fetching the profile after every event.
+        let old_role = profile.role.clone();
+        profile.role = new_role.clone();
 
         // Store updated profile
         env.storage()
@@ -899,9 +902,13 @@ impl OnboardingContract {
             .set(&DataKey::UserProfile(user.clone()), &profile);
         Self::extend_persistent(&env, &DataKey::UserProfile(user.clone()));
 
-        // Emit event
-        env.events()
-            .publish((Symbol::new(&env, "RoleUpdated"),), &user);
+        // Issue #520 — event now carries (user, old_role, new_role) so
+        // downstream consumers don't need a follow-up read to know what
+        // the role transitioned from.
+        env.events().publish(
+            (Symbol::new(&env, "RoleUpdated"),),
+            (user.clone(), old_role, new_role),
+        );
 
         profile
     }
@@ -1172,6 +1179,19 @@ impl OnboardingContract {
         config: &OnboardingConfig,
         metrics: &UserMetrics,
     ) {
+        // Issue #523 — short-circuit on the cheap arithmetic check
+        // BEFORE doing the persistent read of `UserProfile`. The
+        // verification threshold is the hot path; reading + decoding
+        // a `UserProfile` costs persistent-storage CPU instructions
+        // that we charge for every escrow settlement. Bailing out
+        // early when the metric bar isn't met saves that read on
+        // every settle until the user actually qualifies.
+        if metrics.total_escrow_count < config.min_escrow_count_for_verify
+            || metrics.total_volume < config.min_volume_for_verify
+        {
+            return;
+        }
+
         let profile_key = DataKey::UserProfile(address.clone());
         let profile_opt: Option<UserProfile> = env.storage().persistent().get(&profile_key);
         let mut profile = match profile_opt {
@@ -1583,18 +1603,26 @@ impl OnboardingContract {
     /// # Arguments
     /// * `fee` - Fee amount in stroops (0 to disable)
     pub fn set_username_change_fee(env: Env, fee: i128) {
+        // Issue #522 — strict check-effect-interactions ordering. We
+        // load the config first (read-only), validate the caller is
+        // the configured admin, validate the `fee` argument, and only
+        // then perform any TTL extension or persistent write. This way
+        // a non-admin caller cannot wedge the Config TTL by spamming
+        // this entry point — they're rejected by `require_auth` before
+        // we touch storage at all. Same pattern is applied to the
+        // sibling setters below for consistency.
         let config: OnboardingConfig = env
             .storage()
             .persistent()
             .get(&DataKey::Config)
             .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        Self::extend_persistent(&env, &DataKey::Config);
 
         config.platform_admin.require_auth();
         if fee < 0 {
             env.panic_with_error(Error::InvalidFee);
         }
 
+        Self::extend_persistent(&env, &DataKey::Config);
         env.storage()
             .persistent()
             .set(&DataKey::UsernameChangeFee, &fee);

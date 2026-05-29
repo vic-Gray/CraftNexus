@@ -751,7 +751,20 @@ impl CraftNexusContract {
         cid.copy_into_slice(&mut buf[0..len]);
         let cid_bytes = &buf[0..len];
 
-        // CIDv0: exactly 46 chars, starts with "Qm", Base58btc alphabet
+        // CIDv0: exactly 46 chars, starts with "Qm", Base58btc alphabet.
+        //
+        // Issue #521 — the Base58btc alphabet explicitly EXCLUDES
+        // visually-confusable characters: `0` (zero), `O` (capital o),
+        // `I` (capital i), and `l` (lowercase L). The ranges below are
+        // the canonical Base58btc set:
+        //   1..=9               (no leading 0)
+        //   A..=H, J..=N, P..=Z (no I, no O)
+        //   a..=k, m..=z        (no l)
+        // A CIDv0 hash is always 32 bytes of multihash digest →
+        // 46 Base58btc characters. Off-chain indexers that need to
+        // resolve a CIDv0 reference should pin it via an IPFS gateway
+        // such as `https://ipfs.io/ipfs/<CID>` or by talking to a
+        // dedicated cluster (Pinata, web3.storage).
         let is_v0 = len == 46
             && cid_bytes[0] == b'Q'
             && cid_bytes[1] == b'm'
