@@ -641,7 +641,6 @@ pub struct FeeTokenInfo {
 #[cfg_attr(any(test, feature = "testutils"), derive(Debug))]
 pub struct VersionInfo {
     pub current_version: u32,
-    pub latest_upgrade: Option<UpgradeRecord>,
     pub upgrade_count: u32,
 }
 
@@ -714,7 +713,7 @@ pub struct PartialRefundProposal {
 }
 
 /// Minimal cross-contract interface for the OnboardingContract.
-/// Used by EscrowContract to update user reputation and activity metrics
+/// Used by CraftNexusContract to update user reputation and activity metrics
 /// when escrow state changes (release, refund, resolve).
 #[soroban_sdk::contractclient(name = "OnboardingClient")]
 pub trait OnboardingInterface {
@@ -728,10 +727,13 @@ pub trait OnboardingInterface {
     );
 }
 #[contract]
-pub struct EscrowContract;
+pub struct CraftNexusContract;
+
+/// Alias for backward compatibility
+pub type EscrowContract = CraftNexusContract;
 
 #[contractimpl]
-impl EscrowContract {
+impl CraftNexusContract {
     /// Validate IPFS CID format (v0 and v1 with multibase prefixes).
     ///
     /// Supports:
@@ -3084,14 +3086,8 @@ impl EscrowContract {
         let current_version = Self::get_version(env.clone());
         let history = Self::get_upgrade_history(env);
         let upgrade_count = history.len();
-        let latest_upgrade = if upgrade_count == 0 {
-            None
-        } else {
-            history.get(upgrade_count - 1)
-        };
         VersionInfo {
             current_version,
-            latest_upgrade,
             upgrade_count,
         }
     }
