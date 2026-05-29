@@ -83,6 +83,32 @@ pub enum Error {
     StakeQueueFull = 27,
     /// Admin recovery failed due to time lock or invalid conditions
     AdminRecoveryFailed = 28,
+    /// Batch operation limit exceeded
+    BatchLimitExceeded = 29,
+    /// Deprecated function called (no-op for ABI compatibility)
+    DeprecatedFunction = 30,
+    /// No pending admin transfer to accept or cancel
+    NoPendingAdmin = 31,
+    /// No WASM upgrade has been proposed
+    NoUpgradeProposed = 32,
+    /// WASM upgrade cooldown period is still active
+    UpgradeCooldownActive = 33,
+    /// A WASM upgrade proposal already exists
+    UpgradeProposalExists = 34,
+    /// Invalid WASM upgrade hash provided
+    InvalidUpgradeHash = 35,
+    /// Recurring escrow not found
+    RecurringEscrowNotFound = 36,
+    /// Escrow cycle not ready for release
+    CycleNotReady = 37,
+    /// Recurring escrow ID counter has reached its maximum safe value
+    RecurringEscrowIdExhausted = 38,
+    /// Onboarding contract address has not been configured
+    OnboardingContractNotSet = 39,
+    /// Provided metadata hash is invalid
+    InvalidMetadataHash = 40,
+    /// Provided IPFS hash is invalid
+    InvalidIpfsHash = 41,
 }
 
 const ESCROW: Symbol = symbol_short!("ESCROW");
@@ -226,6 +252,44 @@ pub enum DataKey {
     StakeHistoryCount(Address),
     /// Timestamp when an artisan's stake was last modified (for maintenance checks)
     StakeLastModified(Address),
+    /// Indexed storage of a buyer's escrow ID by position
+    BuyerEscrowIndexed(Address, u32),
+    /// Indexed storage of a seller's escrow ID by position
+    SellerEscrowIndexed(Address, u32),
+    /// Count of a buyer's escrows
+    BuyerEscrowCount(Address),
+    /// Count of a seller's escrows
+    SellerEscrowCount(Address),
+    /// Total locked funds across all active escrows for a given token address.
+    TotalLocked(Address),
+    /// Total amount of funds currently staked by artisans for a token address.
+    TotalStaked(Address),
+    /// Bounded log of completed WASM upgrades. Capped at MAX_UPGRADE_HISTORY
+    UpgradeHistory,
+    /// Key for a recurring escrow by its ID
+    RecurringEscrow(u64),
+    /// ID counter for recurring escrows
+    NextRecurringEscrowId,
+    /// Count of currently active (non-released, non-refunded) escrows or recurring escrows for a user address.
+    ActiveObligations(Address),
+}
+
+#[contracttype]
+#[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "testutils"), derive(Debug))]
+pub struct ArtisanStakeData {
+    pub amount: i128,
+    pub token: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "testutils"), derive(Debug))]
+#[repr(u32)]
+pub enum RecurringEscrowAction {
+    Created = 0,
+    CycleReleased = 1,
+    Cancelled = 2,
 }
 
 #[contracttype]
@@ -1010,6 +1074,34 @@ impl EscrowContract {
             env.storage().persistent().set(&count_key, &retained_count);
             Self::extend_persistent(env, &count_key);
         }
+    }
+
+    fn update_active_obligations(env: &Env, user: &Address, delta: i32) {
+        let key = DataKey::ActiveObligations(user.clone());
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        let new_val = if delta > 0 {
+            count.saturating_add(delta as u32)
+        } else {
+            count.saturating_sub((-delta) as u32)
+        };
+        env.storage().persistent().set(&key, &new_val);
+        Self::extend_persistent(env, &key);
+    }
+
+    fn update_total_locked(env: &Env, token: &Address, delta: i128) {
+        let key = DataKey::TotalLocked(token.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        let new_total = current.saturating_add(delta);
+        env.storage().persistent().set(&key, &new_total);
+        Self::extend_persistent(env, &key);
+    }
+
+    fn update_total_staked(env: &Env, token: &Address, delta: i128) {
+        let key = DataKey::TotalStaked(token.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        let new_total = current.saturating_add(delta);
+        env.storage().persistent().set(&key, &new_total);
+        Self::extend_persistent(env, &key);
     }
 
     /// Extend the TTL of a persistent storage entry using standardized values.
@@ -4283,11 +4375,9 @@ impl EscrowContract {
                 token,
             }
         } else {
-            env.storage().persistent().set(&stake_token_key, &token);
-            Self::extend_persistent(&env, &stake_token_key);
-        }
+            ArtisanStakeData { amount, token }
+        };
         
-        let new_stake = current_stake + amount;
         env.storage()
             .persistent()
             .set(&stake_key, &new_stake);
