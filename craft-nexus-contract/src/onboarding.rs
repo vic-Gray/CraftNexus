@@ -56,7 +56,75 @@ pub enum DataKey {
     LastUsernameChange(Address),
 }
 
-use crate::{UserProfile, UserRole, ProfileStatus, LegacyUserProfile};
+/// User roles in the CraftNexus platform
+#[contracttype]
+#[derive(Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "testutils"), derive(Debug))]
+pub enum UserRole {
+    None = 0,      // User has not onboarded
+    Buyer = 1,     // Can purchase items
+    Artisan = 2,   // Can sell items and create escrow
+    Admin = 3,     // Platform administrator
+    /// Dispute-resolution delegate (Issue #116). Moderators may resolve
+    /// escrows when their address is also registered on the escrow
+    /// contract's platform config, but they cannot change WASM, platform
+    /// fees, or other admin-only settings.
+    Moderator = 4,
+}
+
+/// Profile status for users
+#[contracttype]
+#[derive(Copy, Clone, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "testutils"), derive(Debug))]
+pub enum ProfileStatus {
+    Active = 0,
+    Deactivated = 1,
+}
+
+/// Onboarding status for users
+#[contracttype]
+#[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "testutils"), derive(Debug))]
+pub struct UserProfile {
+    pub version: u32,
+    pub address: Address,
+    pub role: UserRole,
+    pub username: String,
+    pub registered_at: u64,
+    pub is_verified: bool,
+    /// Count of escrows where this user was on the winning side (#100)
+    pub successful_trades: u32,
+    /// Count of escrows that ended in a dispute against this user (#100)
+    pub disputed_trades: u32,
+    /// Optional IPFS content identifier for an artisan's portfolio
+    /// showcase (Issue #112).
+    ///
+    /// `None` when unset or after removal via `update_portfolio`. When
+    /// present, the CID must conform to the same validation rules as
+    /// escrow metadata CIDs (see `validate_ipfs_cid`). Indexers can read
+    /// this field from `get_user` / `get_user_by_username` responses or
+    /// subscribe to `PortfolioUpdated` events for live updates.
+    pub portfolio_cid: Option<String>,
+    /// Status of the user profile - Issue #113
+    pub status: ProfileStatus,
+}
+
+#[contracttype]
+#[derive(Clone, Eq, PartialEq)]
+#[cfg_attr(any(test, feature = "testutils"), derive(Debug))]
+struct LegacyUserProfile {
+    pub address: Address,
+    pub role: UserRole,
+    pub username: String,
+    pub registered_at: u64,
+    pub is_verified: bool,
+    /// Count of escrows where this user was on the winning side (#100)
+    pub successful_trades: u32,
+    /// Count of escrows that ended in a dispute against this user (#100)
+    pub disputed_trades: u32,
+    /// Portfolio CID for artisan showcase (IPFS) - Issue #112
+    pub portfolio_cid: Option<String>,
+}
 
 /// Activity metrics used to determine eligibility for auto-verification (#63)
 #[contracttype]
@@ -333,6 +401,11 @@ fn utf8_char_len(first_byte: u8) -> usize {
 }
 
 /// Validate IPFS CID format (v0 and v1 with multibase prefixes).
+///
+/// Shared validation logic for portfolio CIDs (Issue #112) and escrow
+/// metadata hashes. Returns `true` when the string is a well-formed CID;
+/// callers should treat `false` as `Error::InvalidPortfolioCid` in
+/// onboarding or the equivalent escrow error in the main contract.
 ///
 /// Supports:
 /// - CIDv0: 46-char Base58btc starting with "Qm"
@@ -989,7 +1062,63 @@ impl OnboardingContract {
         }
     }
 
-    /// Assign or update the moderator role for a user (admin only).
+    /// Promote an onboarded user to the `Moderator` role (Issue #116).
+    ///
+    /// Convenience wrapper around `update_user_role` that assigns
+    /// `UserRole::Moderator`. Only the platform admin may call this
+    /// function; the target user does not need to sign.
+    ///
+    /// # Integration notes — issue #517 / component #116
+    ///
+    /// ## Preconditions
+    /// - Contract must be initialized (`DataKey::Config` present).
+    /// - Caller must be the configured `platform_admin` (authenticated
+    ///   via `require_auth`).
+    /// - `user` must already be onboarded (`DataKey::UserProfile(user)`).
+    /// - `user` may hold any prior role (`Buyer`, `Artisan`, etc.); there
+    ///   is no self-service path to `Moderator` during `onboard_user`.
+    ///
+    /// ## Storage side-effects
+    /// - Reads and extends TTL on `DataKey::Config`.
+    /// - Reads, writes, and extends TTL on `DataKey::UserProfile(user)`,
+    ///   updating only the `role` field. Profile version
+    ///   (`CURRENT_USER_PROFILE_VERSION`) and all other fields are
+    ///   preserved unchanged.
+    ///
+    /// ## Emitted event — `RoleUpdated`
+    /// - **Topics:** `(Symbol::new("RoleUpdated"),)`
+    /// - **Data:** `(Address, UserRole, UserRole)` — `(user, old_role,
+    ///   UserRole::Moderator)`
+    /// - Indexers should treat this as the canonical signal that a user
+    ///   was promoted to moderator. The event carries both the previous
+    ///   and new role so a role-transition timeline can be reconstructed
+    ///   without a follow-up `get_user` call (Issue #520).
+    ///
+    /// ## Escrow integration
+    /// - Onboarding role assignment alone does **not** authorize dispute
+    ///   resolution on the escrow contract. Operators must also register
+    ///   the moderator's address via the escrow contract's
+    ///   `set_moderator`, which stores it in `PlatformConfig.moderator`.
+    ///   `resolve_dispute` accepts callers matching `config.admin`,
+    ///   `config.moderator`, or `config.arbitrator`.
+    /// - Moderators assigned here cannot invoke admin-only onboarding
+    ///   entrypoints (fee setters, `verify_user`, etc.).
+    ///
+    /// ## Off-chain consumers
+    /// - Use `has_role(user, UserRole::Moderator)` or `get_user_role`
+    ///   for read-only role checks (gas-only, safe for simulation).
+    /// - Prefer subscribing to `RoleUpdated` over polling profile reads.
+    ///
+    /// # Arguments
+    /// * `user` - Address of the onboarded user to promote
+    ///
+    /// # Returns
+    /// Updated `UserProfile` with `role == UserRole::Moderator`.
+    ///
+    /// # Reverts if
+    /// - Contract not initialized
+    /// - Caller is not platform admin
+    /// - User not found
     pub fn set_moderator(env: Env, user: Address) -> UserProfile {
         Self::update_user_role(env, user, UserRole::Moderator)
     }
@@ -1804,19 +1933,62 @@ if Self::is_verification_pending(&env, &user) {
     // Issue #112 – Artisan Portfolio Verification
     // -----------------------------------------------------------------------
 
-    /// Update an artisan's portfolio CID (Issue #112)
+    /// Update an artisan's portfolio CID (Issue #112).
     ///
-    /// Allows artisans to update their portfolio showcase stored on IPFS.
-    /// Validates the CID format using the same validation as escrow metadata.
+    /// Allows artisans to attach, replace, or remove an IPFS content
+    /// identifier that points to their off-chain portfolio showcase.
+    ///
+    /// # Integration notes — issue #513 / component #112
+    ///
+    /// ## Preconditions
+    /// - Contract must be initialized.
+    /// - `user` must sign the transaction (`user.require_auth()`).
+    /// - `user` must be onboarded with `UserRole::Artisan`. Buyers and
+    ///   other roles cannot update a portfolio.
+    /// - When `portfolio_cid` is `Some(cid)`, `cid` must pass
+    ///   `validate_ipfs_cid` (shared with escrow metadata validation):
+    ///   - **CIDv0:** exactly 46 chars, Base58btc, prefix `Qm`
+    ///   - **CIDv1:** multibase prefix `b` (base32lower), `f`
+    ///     (base16lower), or `z` (base58btc) with version byte `0x01`
+    /// - Pass `None` to clear an existing portfolio link.
+    ///
+    /// ## Storage side-effects
+    /// - Reads, writes, and extends TTL on
+    ///   `DataKey::UserProfile(user)`, updating only
+    ///   `UserProfile.portfolio_cid`. All other profile fields —
+    ///   including `version` (`CURRENT_USER_PROFILE_VERSION`), role,
+    ///   verification status, and reputation counters — are preserved.
+    /// - No username-index or config keys are touched. Storage rent for
+    ///   the profile entry grows only when a non-empty CID string is
+    ///   stored; setting `None` removes the optional payload and reduces
+    ///   entry size.
+    ///
+    /// ## Emitted event — `PortfolioUpdated`
+    /// - **Topics:** `(Symbol::new("PortfolioUpdated"),)`
+    /// - **Data:** `Address` — the `user` whose portfolio changed
+    /// - The event does **not** include the CID itself; indexers should
+    ///   call `get_user(user)` or `get_user_by_username` after observing
+    ///   the event to fetch the updated `portfolio_cid` value.
+    ///
+    /// ## Off-chain consumers
+    /// - Portfolio CIDs are also returned by read-only accessors
+    ///   `get_user` and `get_user_by_username` as part of `UserProfile`.
+    /// - This function performs no token transfers (check-effect-
+    ///   interactions safe: checks and storage writes only).
+    /// - Clients should resolve the CID against IPFS gateways or pinning
+    ///   services off-chain; the contract stores only the identifier.
     ///
     /// # Arguments
-    /// * `user` - User's wallet address
-    /// * `portfolio_cid` - IPFS CID of the portfolio (or None to remove)
+    /// * `user` - Artisan's wallet address (must sign)
+    /// * `portfolio_cid` - IPFS CID to set, or `None` to remove
+    ///
+    /// # Returns
+    /// Updated `UserProfile` reflecting the new `portfolio_cid` value.
     ///
     /// # Reverts if
-    /// - User not onboarded
+    /// - User not onboarded (`Error::UserNotFound`)
     /// - User is not an artisan
-    /// - Invalid CID format (if provided)
+    /// - Invalid CID format when `portfolio_cid` is `Some`
     pub fn update_portfolio(env: Env, user: Address, portfolio_cid: Option<String>) -> UserProfile {
         user.require_auth();
 
