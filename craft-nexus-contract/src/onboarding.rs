@@ -1080,15 +1080,36 @@ impl OnboardingContract {
     }
 
     /// Get activity metrics for a user.
-    /// Returns zeroed metrics if no escrow activity has been recorded yet.
+    ///
+    /// Returns the stored [`UserMetrics`] for `address`, or a zeroed default if no
+    /// escrow activity has been recorded yet.
+    ///
+    /// # Storage side-effects
+    /// When a `UserMetrics` entry already exists for `address`, its persistent TTL is
+    /// extended by `TTL_EXTENSION` ledgers as part of the read.  This prevents the
+    /// metrics key from expiring between the first escrow interaction and the next
+    /// write-back, which would otherwise silently reset accumulated counters.
+    ///
+    /// # Arguments
+    /// * `address` - The user's Stellar wallet address
+    ///
+    /// # Returns
+    /// [`UserMetrics`] with `total_escrow_count` and `total_volume` fields populated,
+    /// or zeroed defaults when no record exists yet.
     pub fn get_user_metrics(env: Env, address: Address) -> UserMetrics {
-        env.storage()
+        let key = DataKey::UserMetrics(address.clone());
+        let metrics = env
+            .storage()
             .persistent()
-            .get::<DataKey, UserMetrics>(&DataKey::UserMetrics(address.clone()))
+            .get::<DataKey, UserMetrics>(&key)
             .unwrap_or(UserMetrics {
                 total_escrow_count: 0,
                 total_volume: 0,
-            })
+            });
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(&env, &key);
+        }
+        metrics
     }
 
     /// Increment a user's activity metrics (called by the escrow contract).
