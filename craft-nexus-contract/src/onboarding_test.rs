@@ -1385,3 +1385,22 @@ fn test_error_enum_backward_compatibility() {
     assert_eq!(Error::ReleaseWindowTooShort as u32, 23);
     assert_eq!(Error::StakeTokenMismatch as u32, 24);
 }
+
+/// Issue #117 — set_moderator must reject callers that are not the platform admin.
+#[test]
+#[should_panic]
+fn test_set_moderator_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin) = setup_test(&env);
+
+    let user = Address::generate(&env);
+    client.onboard_user(&user, &soroban_sdk::String::from_str(&env, "target_user"), &UserRole::Buyer);
+
+    // Clear mocked auths so the next call has no authorization.
+    env.set_auths(&[]);
+
+    // Calling set_moderator without admin auth must panic.
+    client.set_moderator(&user);
+}

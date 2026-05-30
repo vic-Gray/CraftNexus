@@ -835,7 +835,16 @@ impl OnboardingContract {
     }
 
     /// Assign or update the moderator role for a user (admin only).
+    ///
+    /// # Security (#117)
+    /// Requires platform admin authorization before any state transition.
     pub fn set_moderator(env: Env, user: Address) -> UserProfile {
+        let config: OnboardingConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Config)
+            .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
+        config.platform_admin.require_auth();
         Self::update_user_role(env, user, UserRole::Moderator)
     }
 

@@ -568,20 +568,6 @@ pub struct Metadata {
     pub category: String,
 }
 
-/// Test-only structure for batch escrow creation parameters
-#[cfg(test)]
-#[derive(Clone, Eq, PartialEq)]
-pub struct CreateEscrowParams {
-    pub buyer: Address,
-    pub seller: Address,
-    pub token: Address,
-    pub amount: i128,
-    pub order_id: u32,
-    pub release_window: Option<u32>,
-    pub ipfs_hash: Option<String>,
-    pub metadata_hash: Option<Bytes>,
-}
-
 /// Proposal record for a pending WASM upgrade.
 ///
 /// `upgrade_at` is the earliest ledger timestamp at which `execute_upgrade` may
@@ -816,9 +802,7 @@ pub struct CraftNexusContract;
 
 /// Alias and compatibility layers
 pub type EscrowContract = CraftNexusContract;
-pub const EscrowContract: CraftNexusContract = CraftNexusContract;
 pub type EscrowContractClient<'a> = CraftNexusContractClient<'a>;
-pub type CreateEscrowParams = EscrowCreateParams;
 
 /// Guard to ensure reentry protection is cleared even if a panic or error occurs.
 /// This is essential to prevent contract locks from persisting across failed calls.

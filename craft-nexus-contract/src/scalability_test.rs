@@ -21,7 +21,7 @@ fn setup_test() -> (
     env.mock_all_auths();
     env.budget().reset_unlimited();
 
-    let contract_id = env.register_contract(None, EscrowContract);
+    let contract_id = env.register_contract(None, CraftNexusContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     let buyer = Address::generate(&env);
