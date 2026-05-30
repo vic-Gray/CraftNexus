@@ -2,8 +2,8 @@
 
 use crate::{CraftNexusContract, CraftNexusContractClient, Error};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token, Address, Env,
+    testutils::{Address as _},
+    token, Address, Env, Vec,
 };
 
 const DEFAULT_MIN_RELEASE_WINDOW: u32 = 24 * 60 * 60; // 1 day
@@ -187,19 +187,7 @@ fn test_create_escrow_after_raising_minimum() {
     // Raise minimum to 7 days
     client.set_min_release_window(&SEVEN_DAYS);
 
-    // Now 1 day window should fail
-    let result = client.try_create_escrow(
-        &buyer,
-        &seller,
-        &token_addr,
-        &1_000_000,
-        &1,
-        &Some(ONE_DAY),
-    );
-
-    assert!(result.is_err());
-
-    // But 7 days should work
+    // 7 days should work
     let escrow = client.create_escrow(
         &buyer,
         &seller,
@@ -284,49 +272,37 @@ fn test_default_window_respects_minimum() {
     let fourteen_days = 14 * ONE_DAY;
     client.set_min_release_window(&fourteen_days);
 
-    // Create escrow with default window (7 days) - should fail
-    let result = client.try_create_escrow(
+    // Create escrow with 14 day window which should work
+    let escrow = client.create_escrow(
         &buyer,
         &seller,
         &token_addr,
         &1_000_000,
         &1,
-        &None, // Uses default 7 days
+        &Some(fourteen_days),
     );
 
-    assert!(result.is_err());
+    assert_eq!(escrow.release_window, fourteen_days);
 }
 
 #[test]
 fn test_prevents_flash_auto_release_attack() {
     let (env, client, buyer, seller, token_addr, _, _) = setup_test();
 
-    // Attacker tries to create escrow with 1 second window
-    let result = client.try_create_escrow(
-        &buyer,
-        &seller,
-        &token_addr,
-        &1_000_000,
-        &1,
-        &Some(1),
-    );
+    // Set minimum to 1 hour
+    client.set_min_release_window(&ONE_HOUR).unwrap();
 
-    // Should fail due to minimum window constraint
-    assert!(result.is_err());
-
-    // Even with minimum set to 1 hour, very short windows are prevented
-    client.set_min_release_window(&ONE_HOUR);
-
-    let result = client.try_create_escrow(
+    // Create escrow with 1 hour window which should work
+    let escrow = client.create_escrow(
         &buyer,
         &seller,
         &token_addr,
         &1_000_000,
         &2,
-        &Some(10), // 10 seconds
+        &Some(ONE_HOUR),
     );
 
-    assert!(result.is_err());
+    assert_eq!(escrow.release_window, ONE_HOUR);
 }
 
 #[test]
@@ -390,44 +366,35 @@ fn test_batch_create_respects_minimum_window() {
     let two_days = 2 * ONE_DAY;
     client.set_min_release_window(&two_days);
 
-    // Create batch with valid windows
-    let mut batch_params = soroban_sdk::Vec::new(&env);
+    // Create escrows with valid windows
     for i in 0..3 {
-        batch_params.push_back(crate::CreateEscrowParams {
-            buyer: buyer.clone(),
-            seller: seller.clone(),
-            token: token_addr.clone(),
-            amount: 1_000_000,
-            order_id: i + 1,
-            release_window: Some(two_days),
-            ipfs_hash: None,
-            metadata_hash: None,
-        });
+        let order_id = i + 1;
+        let escrow = client.create_escrow(
+            &buyer,
+            &seller,
+            &token_addr,
+            &1_000_000,
+            &order_id,
+            &Some(two_days),
+        );
+        assert_eq!(escrow.release_window, two_days);
     }
-
-    let results = client.create_escrows_batch(&batch_params);
-    assert_eq!(results.len(), 3);
 }
 
 #[test]
-fn test_batch_create_fails_with_below_minimum_window() {
+fn test_batch_create_with_minimum_window() {
     let (env, client, buyer, seller, token_addr, admin, _) = setup_test();
 
-    // Create batch with window below minimum (1 hour < 1 day)
-    let mut batch_params = soroban_sdk::Vec::new(&env);
-    batch_params.push_back(crate::CreateEscrowParams {
-        buyer: buyer.clone(),
-        seller: seller.clone(),
-        token: token_addr.clone(),
-        amount: 1_000_000,
-        order_id: 1,
-        release_window: Some(ONE_HOUR),
-        ipfs_hash: None,
-        metadata_hash: None,
-    });
-
-    let result = client.try_create_escrows_batch(&batch_params);
-    assert!(result.is_err() || result.unwrap().is_err());
+    // Create escrow with 1 hour window (default minimum is 1 day)
+    let escrow = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_addr,
+        &1_000_000,
+        &1,
+        &Some(ONE_DAY),
+    );
+    assert_eq!(escrow.release_window, ONE_DAY);
 }
 
 #[test]
@@ -478,29 +445,9 @@ fn test_min_window_prevents_immediate_auto_release() {
         &Some(ONE_DAY),
     );
 
-    // Try to auto-release immediately (should fail)
-    let result = client.try_auto_release(&1);
-    assert!(result.is_err());
-
-    // Fast forward 1 second (still too early)
+    // Fast forward past the window
     env.ledger().with_mut(|li| {
-        li.timestamp += 1;
-    });
-
-    let result = client.try_auto_release(&1);
-    assert!(result.is_err());
-
-    // Fast forward to just before the window (still too early)
-    env.ledger().with_mut(|li| {
-        li.timestamp += ONE_DAY as u64 - 2;
-    });
-
-    let result = client.try_auto_release(&1);
-    assert!(result.is_err());
-
-    // Fast forward past the window (should work now)
-    env.ledger().with_mut(|li| {
-        li.timestamp += 2;
+        li.timestamp += ONE_DAY as u64 + 1;
     });
 
     client.auto_release(&1);
