@@ -707,7 +707,28 @@ impl OnboardingContract {
             .set(&DataKey::UserProfile(user.clone()), &profile);
         Self::extend_persistent(&env, &DataKey::UserProfile(user.clone()));
 
-        // Store username → address mapping for uniqueness enforcement
+        // Store username → address mapping for uniqueness enforcement.
+        //
+        // Storage side-effect: writes a `DataKey::Username(normalized)` persistent entry
+        // whose value is the owner's `Address`.  This secondary index is the authoritative
+        // source for username availability checks and is consulted by:
+        //   - `get_user_by_username`  — resolves a handle to a full `UserProfile`
+        //   - `change_username`       — removes the old key and writes a new one atomically
+        //   - the uniqueness guard earlier in this function (`.has` check)
+        //
+        // Preconditions (validated above):
+        //   1. No `DataKey::Username(normalized)` entry exists yet (uniqueness guard passed).
+        //   2. The normalized username satisfies the configured min/max length constraints.
+        //
+        // Integration notes for off-chain indexers (#104):
+        //   - Index the `UserOnboarded` and `UsernameChanged` events to maintain a
+        //     username → address mapping without polling contract storage directly.
+        //   - The key is stored under a `TTL_EXTENSION`-ledger TTL.  Integrators that
+        //     probe storage directly must account for key expiry if `extend_persistent`
+        //     was not called recently (e.g. for dormant accounts).
+        //   - Username normalisation rules: lowercase, separator characters collapsed to
+        //     `_`, leading/trailing separators stripped.  Apply the same rules on the
+        //     client side before constructing a lookup key.
         env.storage()
             .persistent()
             .set(&DataKey::Username(normalized.clone()), &user);
