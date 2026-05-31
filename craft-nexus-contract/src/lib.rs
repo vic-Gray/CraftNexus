@@ -573,20 +573,6 @@ pub struct Metadata {
     pub category: String,
 }
 
-/// Test-only structure for batch escrow creation parameters
-#[cfg(test)]
-#[derive(Clone, Eq, PartialEq)]
-pub struct CreateEscrowParams {
-    pub buyer: Address,
-    pub seller: Address,
-    pub token: Address,
-    pub amount: i128,
-    pub order_id: u32,
-    pub release_window: Option<u32>,
-    pub ipfs_hash: Option<String>,
-    pub metadata_hash: Option<Bytes>,
-}
-
 /// Proposal record for a pending WASM upgrade.
 ///
 /// `upgrade_at` is the earliest ledger timestamp at which `execute_upgrade` may
@@ -839,6 +825,7 @@ pub trait OnboardingInterface {
     );
     fn deactivate_profile(env: Env, user: Address);
     fn verify_user(env: Env, user: Address) -> UserProfile;
+    fn has_active_contracts(env: Env, user: Address) -> bool;
 }
 
 #[contract]

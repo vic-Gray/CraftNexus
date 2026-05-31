@@ -724,7 +724,7 @@
                             "symbol": "action"
                           },
                           "val": {
-                            "string": "auto_verified"
+                            "symbol": "auto_verified"
                           }
                         },
                         {

@@ -1385,3 +1385,105 @@ fn test_error_enum_backward_compatibility() {
     assert_eq!(Error::ReleaseWindowTooShort as u32, 23);
     assert_eq!(Error::StakeTokenMismatch as u32, 24);
 }
+
+#[test]
+fn test_has_active_contracts() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, admin) = setup_test(&env);
+    let user = Address::generate(&env);
+
+    // 1. No escrow contract registered -> should return false
+    assert!(!client.has_active_contracts(&user));
+
+    // 2. Register and set escrow contract
+    let escrow_id = env.register_contract(None, crate::CraftNexusContract);
+    let escrow_client = crate::CraftNexusContractClient::new(&env, &escrow_id);
+
+    let platform_wallet = Address::generate(&env);
+    let arbitrator = Address::generate(&env);
+    escrow_client.initialize(
+        &platform_wallet,
+        &admin,
+        &arbitrator,
+        &500, // 5% platform fee
+        &Some(client.address.clone()),
+    );
+
+    client.set_escrow_contract(&escrow_id);
+
+    // 3. User has no active escrows -> should return false
+    assert!(!client.has_active_contracts(&user));
+
+    // 4. Create an active escrow (buyer is user, seller is artisan)
+    let seller = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(token_admin);
+    let token_client = token::Client::new(&env, &token_id.address());
+    let token_asset = token::StellarAssetClient::new(&env, &token_id.address());
+    token_asset.mint(&user, &10_000_000);
+
+    // Onboard seller as artisan
+    client.onboard_user(&seller, &String::from_str(&env, "artisan"), &UserRole::Artisan);
+    // Onboard buyer as buyer
+    client.onboard_user(&user, &String::from_str(&env, "buyer"), &UserRole::Buyer);
+
+    // Create escrow
+    escrow_client.create_escrow(
+        &user,
+        &seller,
+        &token_id.address(),
+        &1_000_000,
+        &1,
+        &None,
+    );
+
+    // Now has_active_contracts should return true
+    assert!(client.has_active_contracts(&user));
+    assert!(client.has_active_contracts(&seller));
+}
+
+#[test]
+#[should_panic]
+fn test_get_verification_queue_unauthorized() {
+    let env = Env::default();
+    // Do NOT call env.mock_all_auths()
+
+    let contract_id = env.register_contract(None, OnboardingContract);
+    let client = OnboardingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    // Initialize state directly in storage without require_auth check
+    let config = OnboardingConfig {
+        require_username: true,
+        min_username_length: 3,
+        max_username_length: 50,
+        platform_admin: admin.clone(),
+        auto_verify_enabled: true,
+        min_escrow_count_for_verify: 5,
+        min_volume_for_verify: 10_000_000_000,
+        escrow_contract: None,
+    };
+    env.as_contract(&contract_id, || {
+        env.storage().persistent().set(&DataKey::Config, &config);
+    });
+
+    // This should panic because mock_all_auths is not set, so admin's require_auth() will fail
+    client.get_verification_queue();
+}
+
+#[test]
+fn test_get_verification_queue_authorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin) = setup_test(&env);
+
+    client.get_verification_queue();
+
+    // Check that admin's authorization was verified
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    assert_eq!(auths.get(0).unwrap().0, admin);
+}
+

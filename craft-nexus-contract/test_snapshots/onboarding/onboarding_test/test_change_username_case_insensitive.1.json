@@ -613,7 +613,7 @@
                             "symbol": "action"
                           },
                           "val": {
-                            "string": "username_changed_revoked"
+                            "symbol": "username_revoked"
                           }
                         },
                         {

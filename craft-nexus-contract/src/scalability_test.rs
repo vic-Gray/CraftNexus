@@ -319,7 +319,10 @@ fn test_batch_create_with_indexed_storage() {
     // Verify all indexed entries exist
     for i in 0..10 {
         let index_key = DataKey::BuyerEscrowIndexed(buyer.clone(), i);
-        assert!(env.storage().persistent().has(&index_key));
+        let has_index = env.as_contract(&client.address, || {
+            env.storage().persistent().has(&index_key)
+        });
+        assert!(has_index);
     }
 
     // Verify query returns all escrows

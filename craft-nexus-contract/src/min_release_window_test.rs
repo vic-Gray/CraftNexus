@@ -2,7 +2,7 @@
 
 use crate::{CraftNexusContract, CraftNexusContractClient, Error};
 use soroban_sdk::{
-    testutils::{Address as _},
+    testutils::{Address as _, Ledger},
     token, Address, Env, Vec,
 };
 
@@ -290,7 +290,7 @@ fn test_prevents_flash_auto_release_attack() {
     let (env, client, buyer, seller, token_addr, _, _) = setup_test();
 
     // Set minimum to 1 hour
-    client.set_min_release_window(&ONE_HOUR).unwrap();
+    client.set_min_release_window(&ONE_HOUR);
 
     // Create escrow with 1 hour window which should work
     let escrow = client.create_escrow(
