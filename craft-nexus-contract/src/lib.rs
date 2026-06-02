@@ -1433,7 +1433,7 @@ impl CraftNexusContract {
         let mut count = Self::get_whitelist_count(env);
         for (token, enabled) in legacy_whitelist.iter() {
             if enabled {
-                let token_key = DataKey::WhitelistedToken(token.clone());
+                let token_key = DataKey::WhitelistedTokenIndexed(token.clone());
                 if !env.storage().persistent().has(&token_key) {
                     env.storage().persistent().set(&token_key, &true);
                     Self::extend_persistent(env, &token_key);
@@ -1787,9 +1787,6 @@ impl CraftNexusContract {
             let count = Self::get_whitelist_count(&env);
             if count > 0 {
                 Self::set_whitelist_count(&env, count - 1);
-            }
-        }
-    }
             }
         }
     }
@@ -5578,16 +5575,6 @@ impl CraftNexusContract {
         }
         let potential_refund_fee = Self::calculate_partial_refund_fee(env, gross_refund);
         gross_refund.saturating_add(potential_refund_fee) <= escrow.amount
-    }
-
-    /// Check if a user has any active traditional or recurring escrows.
-    pub fn has_active_escrows(env: Env, user: Address) -> bool {
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ActiveObligations(user))
-            .unwrap_or(0);
-        count > 0
     }
 
     /// Create a new recurring escrow for recurring payments/subscriptions.

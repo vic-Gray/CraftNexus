@@ -1531,6 +1531,57 @@ fn test_get_verification_queue_authorized() {
     assert_eq!(auths.get(0).unwrap().0, admin);
 }
 
+#[test]
+fn test_is_verification_pending_for_requesting_user() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin) = setup_test(&env);
+    let user = Address::generate(&env);
+
+    client.onboard_user(
+        &user,
+        &String::from_str(&env, "pending_user"),
+        &UserRole::Buyer,
+    );
+    client.request_verification(&user);
+
+    assert!(client.is_verification_pending(&user));
+}
+
+#[test]
+#[should_panic]
+fn test_is_verification_pending_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin) = setup_test(&env);
+    let user = Address::generate(&env);
+
+    client.onboard_user(
+        &user,
+        &String::from_str(&env, "pending_unauth"),
+        &UserRole::Buyer,
+    );
+    client.request_verification(&user);
+
+    env.set_auths(&[]);
+    client.is_verification_pending(&user);
+}
+
+#[test]
+#[should_panic]
+fn test_bump_user_profile_ttl_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, _admin) = setup_test(&env);
+    let user = Address::generate(&env);
+
+    env.set_auths(&[]);
+    client.bump_user_profile_ttl(&user);
+}
+
 // ── Issue #470: [SECURITY] Endpoint #69 – set_moderator ─────────────────────
 
 /// Issue #470 — set_moderator must record the admin auth signal on success.

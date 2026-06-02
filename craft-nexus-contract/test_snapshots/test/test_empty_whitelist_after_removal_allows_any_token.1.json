@@ -967,9 +967,6 @@
             "key": {
               "vec": [
                 {
-<<<<<<< Updated upstream
-                  "symbol": "WhitelistedTokenCount"
-=======
                   "symbol": "SellerEscrowIndexed"
                 },
                 {
@@ -977,7 +974,6 @@
                 },
                 {
                   "u32": 0
->>>>>>> Stashed changes
                 }
               ]
             },
@@ -994,9 +990,6 @@
                 "key": {
                   "vec": [
                     {
-<<<<<<< Updated upstream
-                      "symbol": "WhitelistedTokenCount"
-=======
                       "symbol": "SellerEscrowIndexed"
                     },
                     {
@@ -1004,25 +997,18 @@
                     },
                     {
                       "u32": 0
->>>>>>> Stashed changes
                     }
                   ]
                 },
                 "durability": "persistent",
                 "val": {
-<<<<<<< Updated upstream
-                  "u32": 0
-=======
                   "u64": 1
->>>>>>> Stashed changes
                 }
               }
             },
             "ext": "v0"
           },
           518400
-<<<<<<< Updated upstream
-=======
         ]
       ],
       [
@@ -1110,7 +1096,6 @@
             "ext": "v0"
           },
           518400
->>>>>>> Stashed changes
         ]
       ],
       [

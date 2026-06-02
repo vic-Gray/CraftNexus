@@ -948,9 +948,6 @@
             "key": {
               "vec": [
                 {
-<<<<<<< Updated upstream
-                  "symbol": "WhitelistedTokenCount"
-=======
                   "symbol": "SellerEscrowIndexed"
                 },
                 {
@@ -958,7 +955,6 @@
                 },
                 {
                   "u32": 0
->>>>>>> Stashed changes
                 }
               ]
             },
@@ -975,9 +971,6 @@
                 "key": {
                   "vec": [
                     {
-<<<<<<< Updated upstream
-                      "symbol": "WhitelistedTokenCount"
-=======
                       "symbol": "SellerEscrowIndexed"
                     },
                     {
@@ -985,17 +978,12 @@
                     },
                     {
                       "u32": 0
->>>>>>> Stashed changes
                     }
                   ]
                 },
                 "durability": "persistent",
                 "val": {
-<<<<<<< Updated upstream
-                  "u32": 1
-=======
                   "u64": 1
->>>>>>> Stashed changes
                 }
               }
             },
@@ -1011,11 +999,7 @@
             "key": {
               "vec": [
                 {
-<<<<<<< Updated upstream
-                  "symbol": "WhitelistedTokenIndexed"
-=======
                   "symbol": "TotalLocked"
->>>>>>> Stashed changes
                 },
                 {
                   "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
@@ -1035,9 +1019,6 @@
                 "key": {
                   "vec": [
                     {
-<<<<<<< Updated upstream
-                      "symbol": "WhitelistedTokenIndexed"
-=======
                       "symbol": "TotalLocked"
                     },
                     {
@@ -1066,54 +1047,6 @@
             "key": {
               "vec": [
                 {
-                  "symbol": "WhitelistedToken"
-                },
-                {
-                  "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
-                }
-              ]
-            },
-            "durability": "persistent"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-                "key": {
-                  "vec": [
-                    {
-                      "symbol": "WhitelistedToken"
->>>>>>> Stashed changes
-                    },
-                    {
-                      "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
-                    }
-                  ]
-                },
-                "durability": "persistent",
-                "val": {
-                  "bool": true
-                }
-              }
-            },
-            "ext": "v0"
-          },
-          518400
-<<<<<<< Updated upstream
-=======
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-            "key": {
-              "vec": [
-                {
                   "symbol": "WhitelistedTokenCount"
                 }
               ]
@@ -1144,7 +1077,51 @@
             "ext": "v0"
           },
           518400
->>>>>>> Stashed changes
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "vec": [
+                {
+                  "symbol": "WhitelistedTokenIndexed"
+                },
+                {
+                  "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
+                }
+              ]
+            },
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "vec": [
+                    {
+                      "symbol": "WhitelistedTokenIndexed"
+                    },
+                    {
+                      "address": "CDS3FDGQ4JA2V3F26Y4BMWWJEC5TT26RJBN7KIQKUMVO2MAOCMDTSZ7A"
+                    }
+                  ]
+                },
+                "durability": "persistent",
+                "val": {
+                  "bool": true
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          518400
         ]
       ],
       [

@@ -591,7 +591,7 @@ impl OnboardingContract {
         Self::extend_persistent(env, &key);
     }
 
-    fn is_verification_pending(env: &Env, user: &Address) -> bool {
+    fn is_verification_pending_internal(env: &Env, user: &Address) -> bool {
         let key = DataKey::VerificationRequest(user.clone());
         let is_pending = env.storage().persistent().has(&key);
         if is_pending {
@@ -628,7 +628,7 @@ impl OnboardingContract {
                 continue;
             };
 
-            if Self::is_verification_pending(env, &queued_user) {
+            if Self::is_verification_pending_internal(env, &queued_user) {
                 Self::extend_persistent(env, &queue_index_key);
                 break;
             }
@@ -661,15 +661,12 @@ impl OnboardingContract {
     /// `config.platform_admin`. Extends TTL when the key exists.
     fn read_username_fee_wallet(env: &Env, config: &OnboardingConfig) -> Address {
         let key = DataKey::UsernameChangeFeeWallet;
-        let wallet = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(config.platform_admin.clone());
-        if env.storage().persistent().has(&key) {
+        if let Some(wallet) = env.storage().persistent().get(&key) {
             Self::extend_persistent(env, &key);
+            wallet
+        } else {
+            config.platform_admin.clone()
         }
-        wallet
     }
 
     /// Load persisted activity metrics for `address`, or zeroed defaults.
@@ -1039,6 +1036,13 @@ impl OnboardingContract {
         }
     }
 
+    fn require_ttl_bump_auth(config: &OnboardingConfig) {
+        match config.escrow_contract {
+            Some(ref escrow_addr) => escrow_addr.require_auth(),
+            None => config.platform_admin.require_auth(),
+        }
+    }
+
     /// Refresh the persistent TTL for a user's profile entry (#103, Issue #82).
     ///
     /// [PERFORMANCE #82] Storage optimization endpoint: Active escrow contracts call this
@@ -1072,10 +1076,7 @@ impl OnboardingContract {
             .persistent()
             .get(&DataKey::Config)
             .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        match config.escrow_contract {
-            Some(ref escrow_addr) => escrow_addr.require_auth(),
-            None => config.platform_admin.require_auth(),
-        }
+        Self::require_ttl_bump_auth(&config);
         // Issue #496 — extend Config TTL after auth so the configuration
         // entry stays live for the full extension window on every authorized
         // call, preventing silent archival during active escrow lifecycles.
@@ -1109,10 +1110,7 @@ impl OnboardingContract {
             .persistent()
             .get(&DataKey::Config)
             .unwrap_or_else(|| env.panic_with_error(Error::NotInitialized));
-        match config.escrow_contract {
-            Some(ref escrow_addr) => escrow_addr.require_auth(),
-            None => config.platform_admin.require_auth(),
-        }
+        Self::require_ttl_bump_auth(&config);
         // Issue #496 — extend Config TTL after auth, same as bump_user_profile_ttl.
         Self::extend_persistent(&env, &DataKey::Config);
         Self::extend_persistent_if_present(&env, &DataKey::UserMetrics(user))
@@ -2235,29 +2233,26 @@ impl OnboardingContract {
             "Only Buyers and Artisans can request verification"
         );
 
-        if Self::is_verification_pending(&env, &user) {
+        if Self::is_verification_pending_internal(&env, &user) {
             return;
         }
 
         Self::enqueue_verification_request(&env, &user);
 
-        // Append to history
-        let hist_key = DataKey::VerificationHistory(user.clone());
-        let mut history: Vec<VerificationEntry> = env
-            .storage()
-            .persistent()
-            .get(&hist_key)
-            .unwrap_or(Vec::new(&env));
-        history.push_back(VerificationEntry {
-            timestamp: env.ledger().timestamp(),
-            action: String::from_str(&env, "requested"),
-            by: Some(user.clone()),
-        });
-        if history.len() > 10 {
-            history.remove(0);
-        }
-        env.storage().persistent().set(&hist_key, &history);
-        Self::extend_persistent(&env, &hist_key);
+        Self::append_verification_history(
+            &env,
+            &user,
+            VerificationActionCode::Requested,
+            Some(user.clone()),
+        );
+    }
+
+    /// Check whether a user currently has a pending manual verification request.
+    ///
+    /// The queried user must authorize this read.
+    pub fn is_verification_pending(env: Env, user: Address) -> bool {
+        user.require_auth();
+        Self::is_verification_pending_internal(&env, &user)
     }
 
     /// Approve or reject a pending manual verification request (admin only).
@@ -2324,28 +2319,16 @@ impl OnboardingContract {
 
         Self::clear_verification_request(&env, &user);
 
-        // Append to history
-        let action = if approve {
-            String::from_str(&env, "approved")
-        } else {
-            String::from_str(&env, "rejected")
-        };
-        let hist_key = DataKey::VerificationHistory(user.clone());
-        let mut history: Vec<VerificationEntry> = env
-            .storage()
-            .persistent()
-            .get(&hist_key)
-            .unwrap_or(Vec::new(&env));
-        history.push_back(VerificationEntry {
-            timestamp: env.ledger().timestamp(),
-            action,
-            by: Some(config.platform_admin.clone()),
-        });
-        if history.len() > 10 {
-            history.remove(0);
-        }
-        env.storage().persistent().set(&hist_key, &history);
-        Self::extend_persistent(&env, &hist_key);
+        Self::append_verification_history(
+            &env,
+            &user,
+            if approve {
+                VerificationActionCode::Approved
+            } else {
+                VerificationActionCode::Rejected
+            },
+            Some(config.platform_admin.clone()),
+        );
 
         if approve {
             env.events()
@@ -2411,7 +2394,7 @@ impl OnboardingContract {
                 .persistent()
                 .get::<DataKey, Address>(&queue_index_key)
             {
-                if Self::is_verification_pending(&env, &user) {
+                if Self::is_verification_pending_internal(&env, &user) {
                     queue.push_back(user);
                 }
             }
