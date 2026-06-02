@@ -1526,6 +1526,13 @@ impl CraftNexusContract {
         Self::get_onboarding_address(&env).is_some()
     }
 
+    /// Check if a user has any active escrows or recurring escrows.
+    pub fn has_active_escrows(env: Env, user: Address) -> bool {
+        let key = DataKey::ActiveObligations(user);
+        let count: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        count > 0
+    }
+
     /// Emit a structured warning event when a cross-contract call to the
     /// onboarding contract fails. Indexers can subscribe to `OB_FAIL` to flag
     /// integration drift between the escrow and onboarding contracts.
@@ -5587,16 +5594,6 @@ impl CraftNexusContract {
         }
         let potential_refund_fee = Self::calculate_partial_refund_fee(env, gross_refund);
         gross_refund.saturating_add(potential_refund_fee) <= escrow.amount
-    }
-
-    /// Check if a user has any active traditional or recurring escrows.
-    pub fn has_active_escrows(env: Env, user: Address) -> bool {
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ActiveObligations(user))
-            .unwrap_or(0);
-        count > 0
     }
 
     /// Create a new recurring escrow for recurring payments/subscriptions.
